@@ -1,0 +1,94 @@
+package org.hazelcast.eventsourcing;
+
+import com.hazelcast.jet.Job;
+import com.hazelcast.jet.config.JobConfig;
+import com.hazelcast.jet.pipeline.JournalInitialPosition;
+import com.hazelcast.jet.pipeline.Pipeline;
+import com.hazelcast.jet.pipeline.ServiceFactories;
+import com.hazelcast.jet.pipeline.ServiceFactory;
+import com.hazelcast.jet.pipeline.Sinks;
+import com.hazelcast.jet.pipeline.Sources;
+import com.hazelcast.map.EntryProcessor;
+import com.hazelcast.map.IMap;
+import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.SourcedEvent;
+import org.hazelcast.eventsourcing.eventstore.EventStore;
+
+import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
+
+/**
+ *
+ * @param <D> Domain object type
+ * @param <K> Domain object key type
+ */
+public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runnable {
+
+    private EventSourcingController controller;
+    private String pendingEventsMapName;
+
+    public EventSourcingPipeline(EventSourcingController controller) {
+        this.controller = controller;
+        this.pendingEventsMapName = controller.getPendingEventsMapName();
+    }
+
+    @Override
+    public void run() {
+        Pipeline p = createPipeline();
+        JobConfig jobConfig = new JobConfig();
+        // TODO: add jars as needed
+        jobConfig.setName("EventSourcing Pipeline"); // TODO: add domain object name to differentiate multiple jobs?
+        Job j = controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
+    }
+
+    public Pipeline createPipeline() {
+
+        // Event Store as a service
+        EventStore eventStore = controller.getEventStore();
+        ServiceFactory<?, EventStore> eventStoreServiceFactory =
+                ServiceFactories.sharedService((ctx) -> eventStore);
+
+        // IMap/Materialized View as a service --
+        ServiceFactory<?, IMap<K, D>> materializedViewServiceFactory =
+                ServiceFactories.iMapService(controller.getViewMapName());
+
+        Pipeline p = Pipeline.create();
+        p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
+                .withoutTimestamps()
+                // Update SourcedEvent with timestamp
+                .map(pendingEvent -> {
+                    Long sequence = (Long) pendingEvent.getKey();
+                    SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    System.out.println("IN: Key is " + event.getKey());
+                    System.out.println("IN: Payload is " + event.getPayload());
+                    event.setTimestamp(System.currentTimeMillis());
+                    // DATA IS GOOD at this point, crap when appended to EventStore ...
+                    return tuple2(sequence, event);
+                }).setName("Update SourcedEvent with timestamp")
+                // Append to event store
+                .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
+                    long sequence = tuple2.f0();
+                    SourcedEvent<D,K> event = tuple2.f1();
+                    eventstore.append(sequence, event);
+                    return event;
+                }).setName("Persist Event to event store")
+                // Update materialized view (using EntryProcessor)
+                .mapUsingService(materializedViewServiceFactory, (viewMap, event) -> {
+                    viewMap.executeOnKey(event.getKey(), (EntryProcessor<K, D, D>) viewEntry -> {
+                        D domainObject = viewEntry.getValue();
+                        K domainObjectKey = viewEntry.getKey();
+                        domainObject = event.apply(domainObject);
+                        viewEntry.setValue(domainObject);
+                        return domainObject;
+                    });
+                    return event;
+                }).setName("Update Materialized View")
+                // Broadcast the event to all subscribers
+                .map(event -> {
+                    event.publish();
+                    return event;
+                }).setName("Publish event to all subscribers")
+                .writeTo(Sinks.logger());
+
+        return p;
+    }
+}
