@@ -4,12 +4,12 @@ import com.hazelcast.partition.PartitionAware;
 
 import java.io.Serializable;
 
-public class PartitionedSequenceKey implements PartitionAware<String>, Comparable, Serializable {
+public class PartitionedSequenceKey<K> implements PartitionAware<K>, Comparable<K>, Serializable {
 
-    String domainObjectKey; // was K
+    K domainObjectKey;
     long sequence;
 
-    public PartitionedSequenceKey(long sequence, String domainObjectKey) {
+    public PartitionedSequenceKey(long sequence, K domainObjectKey) {
         this.domainObjectKey = domainObjectKey;
         this.sequence = sequence;
     }
@@ -19,7 +19,7 @@ public class PartitionedSequenceKey implements PartitionAware<String>, Comparabl
     }
 
     @Override
-    public String getPartitionKey() {
+    public K getPartitionKey() {
         return domainObjectKey;
     }
 
