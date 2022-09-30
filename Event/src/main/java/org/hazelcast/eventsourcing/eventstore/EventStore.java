@@ -2,9 +2,7 @@ package org.hazelcast.eventsourcing.eventstore;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
-import com.hazelcast.core.HazelcastJsonValue;
 import com.hazelcast.map.IMap;
-import com.hazelcast.org.json.JSONObject;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
@@ -13,7 +11,11 @@ import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.function.Supplier;
 
 /** Hazelcast-centric implementation of an Event Store to support the Event Sourcing
@@ -54,15 +56,6 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
             "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
             ")";
 
-    // Domain object (e.g., Account, not AccountEvent or AccountEventStore) has to
-    // be constructed in the Event Store's materialize method, so we pass in a constructor
-    // when creating the store.  (e.g., new EventStore("myAccountEventStore", Account::new) )
-    // Requires a no-arg constructor on the domain class
-//    interface SerializableSupplier<T> extends Supplier<T>, Serializable {}
-//    protected SerializableSupplier<? extends D> domainObjectConstructor; // TODO: ERROR: not serialiable
-//    public static class Foo  { }
-//    SerializableSupplier<?> a1 = Foo::new;
-
     public EventStore(String mapName, String keyName, Supplier<? extends D> domainObjConstructor, HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
         this.eventMapName = mapName;
@@ -73,19 +66,13 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         // flexibility in dynamic configuration to do this on-the-fly at this time.
     }
 
-//    private Long getNextSequence() {
-//        return sequenceProvider.incrementAndGet();
-//    }
-
-//    public void append(T event) {
-//        Long sequence = getNextSequence();
-//        eventMap.set(sequence, event);
-//        event.publish();
-//    }
-
     public void append(long sequence, T event) {
-        eventMap.set(sequence, event);
-        System.out.println("EventStore.append " + event + " size is now " + eventMap.size());
+        SourcedEvent previous = eventMap.put(sequence, event);
+        if (previous != null) {
+            System.out.println("Sequence collision: " + event + " vs " + previous);
+        }
+        // Size reported here is not reliable!
+        //System.out.println("EventStore.append " + event + " size is now " + eventMap.size());
     }
 
     // MSF functionality not yet implemented in ESF:
@@ -100,6 +87,14 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
      *                  keys to be returned are not likely to produce useful results.
      * @return a domain object reflecting all Events
      */
+    public D materialize(D startingWith, String keyValue) {
+        D materializedObject = startingWith;
+        List<SourcedEvent<D,K>> events = getEventsFor("key", keyValue);
+        for (SourcedEvent<D,K> event: events) {
+            materializedObject = event.apply(materializedObject);
+        }
+        return materializedObject;
+    }
 //    public D materialize(String predicate) {
 //        // TODO: rework to use SQL rather than predicate API
 //        // TODO: what parameterization is missing that requires cast of event?
@@ -122,7 +117,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
      * @param keyValue
      * @return
      */
-    public Iterator<SqlRow> getEventsFor(String keyName, String keyValue) {
+    public List<SourcedEvent<D,K>> getEventsFor(String keyName, String keyValue) {
         if (sqlService == null) {
             sqlService = hazelcast.getSql();
             // CREATE MAPPING doesn't support dynamic parameters, so we do the
@@ -130,28 +125,33 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
             mapping_template = mapping_template.replaceAll("\\?", eventMapName);
             sqlService.execute(mapping_template);
         }
-        //String q = "select * from account_ES where 'key' = '12345' ORDER BY __key";
         // Having difficulty with parameter substitution in SqlStatement so just build
         // our own query string
         String all = "select * from " + eventMapName;
-        String query = "select * from " + eventMapName + " WHERE '" +
-                keyName + "' = CAST(" + keyValue + " AS VARCHAR) ORDER BY __key";
+        String query = "select * from " + eventMapName + " WHERE CAST(\"" +
+                keyName + "\" AS VARCHAR) = '" + keyValue + "' ORDER BY __key";
+
         SqlStatement statement = new SqlStatement(query);
         //statement.setParameters(List.of(eventMapName, keyName, keyValue));
         System.out.println("Query: " + statement);
         SqlResult result = sqlService.execute(statement);
         Iterator<SqlRow> iter = result.iterator();
+        List<SourcedEvent<D,K>> events = new ArrayList<>();
         while (iter.hasNext()) {
             SqlRow row = iter.next();
-            HazelcastJsonValue payload = row.getObject("payload");
-            JSONObject jobj = new JSONObject(payload.getValue());
-            //GenericRecord payload = row.getObject("payload");
-            //Object balance = row.getObject("initialBalance");
-            System.out.println("payload initBalance " + jobj.getBigDecimal("initialBalance"));
+            String eventClass = row.getObject("eventClass");
+            try {
+                Class<? extends SourcedEvent<D,K>> k = (Class<? extends SourcedEvent<D, K>>) Class.forName(eventClass);
+                Constructor c = k.getConstructor(SqlRow.class);
+                SourcedEvent<D,K> event = (SourcedEvent) c.newInstance(row);
+                //System.out.println("Event created from SQL " + event);
+                events.add(event);
+            } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException | IllegalAccessException |
+                     InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
         }
-        //SqlResult explain = sqlService.execute("explain " + q, keyName, key);
-        //return result.iterator();
-        return null; // see above ... when debugged will restore return of iterator
+        return events;
     }
 
 //    public void compact(String predicate, float compressionPercentage) {

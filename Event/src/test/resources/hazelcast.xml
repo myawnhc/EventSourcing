@@ -12,12 +12,21 @@
         <compact-serialization>
             <serializers>
                 <serializer>org.hazelcast.eventsourcing.testobjects.OpenAccountEventSerializer</serializer>
+                <serializer>org.hazelcast.eventsourcing.testobjects.BalanceChangeEventSerializer</serializer>
             </serializers>
         </compact-serialization>
     </serialization>
 
     <map name="*_PENDING">
         <event-journal enabled="true"></event-journal>
+        <indexes>
+            <index>
+                <attributes>
+                    <attribute>key</attribute>   <!-- domain object key -->
+                    <attribute>__key</attribute> <!-- sequence -->
+                </attributes>
+            </index>
+        </indexes>
     </map>
 
     <map name="*_ES">

@@ -4,6 +4,7 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.map.IMap;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 
@@ -17,9 +18,10 @@ import java.util.function.Supplier;
  * @param <T> the Event Object type that will be appended to the Event Store
  */
 
-public class EventSourcingController <D extends DomainObject<K>, K, T extends SourcedEvent<D,K>> {
+public class EventSourcingController <D extends DomainObject<K>, K extends Comparable<K>, T extends SourcedEvent<D,K>> {
     private HazelcastInstance hazelcast;
-    private String domainObjectName; // TODO: remove if remains unused ...
+    private String domainObjectName;
+    public String getDomainObjectName() { return domainObjectName; } // used to name pipeline job
 
     // Sequence Generator
     private String sequenceGeneratorName;
@@ -49,7 +51,7 @@ public class EventSourcingController <D extends DomainObject<K>, K, T extends So
 
     // Pending Queue / Map config
     private String pendingEventsMapName;
-    private IMap<Long, SourcedEvent> pendingEventsMap; // keyed by sequence
+    private IMap<PartitionedSequenceKey, SourcedEvent> pendingEventsMap; // keyed by sequence
 
     // TODO: Pipeline Config
 
@@ -166,19 +168,9 @@ public class EventSourcingController <D extends DomainObject<K>, K, T extends So
     public String getPendingEventsMapName() { return pendingEventsMapName; }
     public HazelcastInstance getHazelcast() { return hazelcast; }
 
-    public void handleEvent(SourcedEvent event) {
+    public void handleEvent(SourcedEvent<D,K> event) {
         long sequence = getNextSequence();
-        pendingEventsMap.put(sequence, event); // TODO: check key, payload here
+        PartitionedSequenceKey psk = new PartitionedSequenceKey(sequence, (String) event.getKey());
+        pendingEventsMap.put(psk, event);
     }
-
-//    // just for testing ... delete in favor of unit tests
-//    public static void main(String[] args) {
-//        // Testing only
-//        HazelcastInstance hz = Hazelcast.newHazelcastInstance();
-//        EventSourcingController esc = EventSourcingController.newBuilder(hz, "account")
-//                .sequenceGeneratorName("accountSequence")
-//                .build();
-//        System.out.println("Next sequence: " + esc.getNextSequence());
-//        hz.shutdown();
-//    }
 }

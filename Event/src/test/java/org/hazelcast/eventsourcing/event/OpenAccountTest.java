@@ -12,31 +12,33 @@ import org.hazelcast.eventsourcing.testobjects.AccountEvent;
 import org.hazelcast.eventsourcing.testobjects.OpenAccountEvent;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 
-public class SubscriptionTest {
+public class OpenAccountTest {
 
     //static EventStore<Account, String, AccountEvent> store;
     static EventSourcingController<Account, String, AccountEvent> controller;
     static SubscriptionManager<AccountEvent> submgr;
+    static HazelcastInstance hazelcast;
 
     @BeforeAll
     static void init() {
         // Create event store
-        HazelcastInstance embedded = Hazelcast.newHazelcastInstance();
+        hazelcast = Hazelcast.newHazelcastInstance();
 
         //store = new EventStore<>("accountMap", "accountID", Account::new, embedded);
-        controller = EventSourcingController.newBuilder(embedded, "account")
+        controller = EventSourcingController.newBuilder(hazelcast, "account")
                 .domainObjectConstructor(Account::new)
                 .build();
 
         // Create subscription manager, register it
         submgr = new ReliableTopicSubMgr<>();
-        SubscriptionManager.register(embedded, OpenAccountEvent.class, submgr);
+        SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
     }
 
     @AfterAll
@@ -49,36 +51,19 @@ public class SubscriptionTest {
     void tearDown() {}
 
     @Test
-    void create() {
-        // Account is a DomainObject
-        //Account acct = new Account();
-
+    void verifyInitialBalance() {
         AccountConsumer consumer = new AccountConsumer();
         submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
 
-        // OpenAccountEvent is a SequencedEvent
+        // OpenAccountEvent is a SourcedEvent
         OpenAccountEvent open = new OpenAccountEvent("12345", "Bob", BigDecimal.valueOf(777.22));
-        //store.append(open); // triggers publication - on the way out
-
         controller.handleEvent(open);
 
-        // Verify: materialized account is as expected (correct balance)
-        // Verify: event store is as expected (one event)
-        // Verify: any state of subscription manager is as expected (one subscriber)
-        // Verify: subscriber received event
+        // Get a materialized view that reflects the event
+        EventStore<Account, String, AccountEvent> es = controller.getEventStore();
+        Account a = es.materialize(new Account(), "12345");
 
-        // Invoking getEventsFor directly until materialize is implemented.
-        EventStore es = controller.getEventStore();
-        es.getEventsFor("key", "12345");
-
-        // Although we aren't explicitly calling shutdown we are nevertheless shutting down and
-        // missing seeing logging output from our events ... add sleep until we can figure out
-        // a better wait-for-results strategy.
-        try {
-            Thread.sleep(5000000);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-
+        Assertions.assertEquals(BigDecimal.valueOf(777.22), a.getBalance());
+        Assertions.assertEquals(1, consumer.getEventCount());
     }
 }

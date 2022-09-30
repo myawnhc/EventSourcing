@@ -11,6 +11,7 @@ import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 
@@ -36,7 +37,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runn
         Pipeline p = createPipeline();
         JobConfig jobConfig = new JobConfig();
         // TODO: add jars as needed
-        jobConfig.setName("EventSourcing Pipeline"); // TODO: add domain object name to differentiate multiple jobs?
+        jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
         Job j = controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
     }
 
@@ -52,16 +53,16 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runn
                 ServiceFactories.iMapService(controller.getViewMapName());
 
         Pipeline p = Pipeline.create();
+        p.setPreserveOrder(true); // trying to impose order on event journal
         p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
-                .withoutTimestamps()
+                .withIngestionTimestamps()
                 // Update SourcedEvent with timestamp
                 .map(pendingEvent -> {
-                    Long sequence = (Long) pendingEvent.getKey();
+                    PartitionedSequenceKey psk = (PartitionedSequenceKey) pendingEvent.getKey();
+                    Long sequence = psk.getSequence();
+                    //System.out.println("Received pendingEvent with sequence " + sequence);
                     SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
-                    System.out.println("IN: Key is " + event.getKey());
-                    System.out.println("IN: Payload is " + event.getPayload());
                     event.setTimestamp(System.currentTimeMillis());
-                    // DATA IS GOOD at this point, crap when appended to EventStore ...
                     return tuple2(sequence, event);
                 }).setName("Update SourcedEvent with timestamp")
                 // Append to event store
@@ -75,7 +76,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runn
                 .mapUsingService(materializedViewServiceFactory, (viewMap, event) -> {
                     viewMap.executeOnKey(event.getKey(), (EntryProcessor<K, D, D>) viewEntry -> {
                         D domainObject = viewEntry.getValue();
-                        K domainObjectKey = viewEntry.getKey();
+                        //K domainObjectKey = viewEntry.getKey();
                         domainObject = event.apply(domainObject);
                         viewEntry.setValue(domainObject);
                         return domainObject;
