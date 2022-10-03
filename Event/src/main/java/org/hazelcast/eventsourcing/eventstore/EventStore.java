@@ -16,7 +16,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.function.Supplier;
 
 /** Hazelcast-centric implementation of an Event Store to support the Event Sourcing
  *  microservice pattern (@see https://microservices.io/patterns/data/event-sourcing.html)
@@ -56,23 +55,14 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
             "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
             ")";
 
-    public EventStore(String mapName, String keyName, Supplier<? extends D> domainObjConstructor, HazelcastInstance hazelcast) {
+    public EventStore(String mapName, HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
         this.eventMapName = mapName;
         this.eventMap = hazelcast.getMap(mapName);
-//        this.sequenceProvider = hazelcast.getCPSubsystem().getAtomicLong(mapName);
-        //this.domainObjectConstructor = (SerializableSupplier<? extends D>) domainObjConstructor;
-        // TODO: keyName would be used to ensure we have a proper index on the map, but we don't have sufficient
-        // flexibility in dynamic configuration to do this on-the-fly at this time.
     }
 
     public void append(long sequence, T event) {
-        SourcedEvent previous = eventMap.put(sequence, event);
-        if (previous != null) {
-            System.out.println("Sequence collision: " + event + " vs " + previous);
-        }
-        // Size reported here is not reliable!
-        //System.out.println("EventStore.append " + event + " size is now " + eventMap.size());
+        eventMap.set(sequence, event);
     }
 
     // MSF functionality not yet implemented in ESF:
@@ -118,13 +108,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
      * @return
      */
     public List<SourcedEvent<D,K>> getEventsFor(String keyName, String keyValue) {
-        if (sqlService == null) {
-            sqlService = hazelcast.getSql();
-            // CREATE MAPPING doesn't support dynamic parameters, so we do the
-            // substitution here.
-            mapping_template = mapping_template.replaceAll("\\?", eventMapName);
-            sqlService.execute(mapping_template);
-        }
+        initSqlService();
         // Having difficulty with parameter substitution in SqlStatement so just build
         // our own query string
         String all = "select * from " + eventMapName;
@@ -152,6 +136,48 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
             }
         }
         return events;
+    }
+
+    private void initSqlService() {
+        if (sqlService == null) {
+            sqlService = hazelcast.getSql();
+            // CREATE MAPPING doesn't support dynamic parameters, so we do the
+            // substitution here.
+            mapping_template = mapping_template.replaceAll("\\?", eventMapName);
+            sqlService.execute(mapping_template);
+        }
+    }
+
+    public int getEventCountFor(String keyName, String keyValue) {
+        initSqlService();
+        String query = "select count(*) from " + eventMapName + " WHERE CAST(\"" +
+                keyName + "\" AS VARCHAR) = '" + keyValue;
+
+        SqlStatement statement = new SqlStatement(query);
+        System.out.println("Query: " + statement);
+        SqlResult result = sqlService.execute(statement);
+        Iterator<SqlRow> iter = result.iterator();
+        int count = -1;
+        while (iter.hasNext()) {
+            SqlRow row = iter.next();
+            count = row.getObject("count");
+        }
+        return count;
+    }
+
+    public int compact(String keyName, String keyValue, float compressionPercentage) {
+        // TODO: ensure compressionPercentage < 1
+        int eventCount = getEventCountFor(keyName, keyValue);
+        int removalCount = (int) (eventCount * compressionPercentage);
+        System.out.println("Current count " + eventCount + " count to remove " + removalCount);
+        if (removalCount < 1) return 0;
+        // TODO: getEvents, add 'removalCount' entries to a list
+        // TODO: iterate the events building a materialized view
+        // TODO: convert the materialized view to a checkpoint/summary entry
+        // TODO: write the checkpoint record, using seq # of last-to-remove record as sequence
+        //       (this will overwrite that entry)
+        // TODO: remove all summarized records except the one that we just overwrote
+        return 0; // TODO: removalCount
     }
 
 //    public void compact(String predicate, float compressionPercentage) {

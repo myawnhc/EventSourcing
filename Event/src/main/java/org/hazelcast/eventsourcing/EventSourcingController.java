@@ -8,8 +8,6 @@ import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 
-import java.util.function.Supplier;
-
 /**
  *
  *
@@ -32,16 +30,13 @@ public class EventSourcingController <D extends DomainObject<K>, K extends Compa
 
     // Event Store
     private String eventStoreName;
-    private String keyName;
-    private Supplier<D> domainObjectConstructor;
     /* Future - settings for compaction and spill-to-disk */
-    //private IMap<K, String> eventStoreMap; // TODO: Need parameterized types for K, V
     private EventStore<D, K, T> eventStore;
     public EventStore<D, K, T> getEventStore() {
         return eventStore;
     }
 
-    // TODO: View/DAO Config
+    // View/DAO Config
     private String viewMapName;
     public String getViewMapName() {
         return viewMapName;
@@ -53,7 +48,6 @@ public class EventSourcingController <D extends DomainObject<K>, K extends Compa
     private String pendingEventsMapName;
     private IMap<PartitionedSequenceKey, SourcedEvent> pendingEventsMap; // keyed by sequence
 
-    // TODO: Pipeline Config
 
     /////////////
     // Builder
@@ -69,7 +63,6 @@ public class EventSourcingController <D extends DomainObject<K>, K extends Compa
             this.controller.eventStoreName = domainObjectName + "_ES";
             this.controller.pendingEventsMapName = domainObjectName + "_PENDING";
             this.controller.viewMapName = domainObjectName + "_VIEW";
-            // TODO: any default for keyname?  Any consequence if none provided?
         }
 
         ///////////////////////
@@ -92,22 +85,16 @@ public class EventSourcingController <D extends DomainObject<K>, K extends Compa
             controller.eventStoreName = name;
             return this;
         }
-        public EventSourcingControllerBuilder keyName(String name) {
-            controller.keyName = name;
-            return this;
-        }
-        public EventSourcingControllerBuilder domainObjectConstructor(Supplier<? extends DomainObject> cstr) {
-            controller.domainObjectConstructor = cstr;
-            return this;
-        }
+//        public EventSourcingControllerBuilder keyName(String name) {
+//            controller.keyName = name;
+//            return this;
+//        }
 
         // TODO: compaction policy
         // TODO: spill-to-disk enablement (maybe related to compaction policy)
 
         private void buildEventStore() {
-            // TODO: fail if domainObjectConstructor not set; others have reasonable defaults
-            EventStore es = new EventStore(controller.eventStoreName, controller.keyName,
-                    controller.domainObjectConstructor, controller.hazelcast);
+            EventStore es = new EventStore(controller.eventStoreName, controller.hazelcast);
             controller.eventStore = es;
         }
 
@@ -170,7 +157,7 @@ public class EventSourcingController <D extends DomainObject<K>, K extends Compa
 
     public void handleEvent(SourcedEvent<D,K> event) {
         long sequence = getNextSequence();
-        PartitionedSequenceKey psk = new PartitionedSequenceKey(sequence, (String) event.getKey());
+        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey(sequence, event.getKey());
         pendingEventsMap.put(psk, event);
     }
 }
