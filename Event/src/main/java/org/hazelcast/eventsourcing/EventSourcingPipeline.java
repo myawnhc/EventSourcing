@@ -58,18 +58,18 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runn
                 .withIngestionTimestamps()
                 // Update SourcedEvent with timestamp
                 .map(pendingEvent -> {
-                    PartitionedSequenceKey psk = (PartitionedSequenceKey) pendingEvent.getKey();
-                    Long sequence = psk.getSequence();
+                    PartitionedSequenceKey<K> psk = (PartitionedSequenceKey) pendingEvent.getKey();
+                    //Long sequence = psk.getSequence();
                     //System.out.println("Received pendingEvent with sequence " + sequence);
                     SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
                     event.setTimestamp(System.currentTimeMillis());
-                    return tuple2(sequence, event);
+                    return tuple2(psk, event);
                 }).setName("Update SourcedEvent with timestamp")
                 // Append to event store
                 .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
-                    long sequence = tuple2.f0();
+                    PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1();
-                    eventstore.append(sequence, event);
+                    eventstore.append(key, event);
                     return event;
                 }).setName("Persist Event to event store")
                 // Update materialized view (using EntryProcessor)

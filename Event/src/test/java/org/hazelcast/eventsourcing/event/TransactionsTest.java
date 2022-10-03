@@ -42,7 +42,7 @@ public class TransactionsTest {
 
         //store = new EventStore<>("accountMap", "accountID", Account::new, embedded);
         controller = EventSourcingController.newBuilder(hazelcast, "account")
-                .domainObjectConstructor(Account::new)
+//                .domainObjectConstructor(Account::new)
                 .build();
 
         // Create subscription manager, register it

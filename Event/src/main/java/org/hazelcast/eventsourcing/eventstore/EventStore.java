@@ -8,6 +8,7 @@ import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
 import com.hazelcast.sql.SqlStatement;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
@@ -42,15 +43,14 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
     transient protected HazelcastInstance hazelcast;
 
     protected String eventMapName;
-    transient protected IMap<Long, T> eventMap;
-    //protected IAtomicLong sequenceProvider;
+    transient protected IMap<PartitionedSequenceKey, T> eventMap;
     transient protected SqlService sqlService;
 
     private String mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
             "TYPE IMap\n" +
             "OPTIONS (\n" +
             "  'keyFormat' = 'java',\n" +
-            "  'keyJavaClass' = 'java.lang.Long',\n" +
+            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
             "  'valueFormat' = 'java',\n" +
             "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
             ")";
@@ -61,8 +61,8 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(mapName);
     }
 
-    public void append(long sequence, T event) {
-        eventMap.set(sequence, event);
+    public void append(PartitionedSequenceKey key, T event) {
+        eventMap.set(key, event);
     }
 
     // MSF functionality not yet implemented in ESF:
