@@ -8,7 +8,12 @@ package org.hazelcast.eventsourcing.event;
  *     for (Event e : eventStore.getEventsFor(key)
  *        dobj.apply(e)
  * </code>
- * @param <K>
+ *
+ * The above code is for illustration; up-to-date materialized views are maintained by the
+ * framework in the [domainObjectName]_VIEW IMap; if the view needs to be recreated it can
+ * be done via the EventStore.materialize() method.
+ *
+ * @param <K> The key type.  Typically a string; for queries to work it must be castable to VARCHAR
  */
 public interface DomainObject<K> {
     K getKey();

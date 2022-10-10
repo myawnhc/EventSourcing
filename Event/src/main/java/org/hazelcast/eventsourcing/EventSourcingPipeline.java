@@ -88,7 +88,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Runn
                     event.publish();
                     return event;
                 }).setName("Publish event to all subscribers")
-                .writeTo(Sinks.logger());
+                .writeTo(Sinks.noop());
 
         return p;
     }
