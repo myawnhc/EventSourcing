@@ -34,8 +34,6 @@ import java.util.List;
  * @param <D> the Domain object which is updated by the event sequence
  * @param <K> the type of the key of the domain object
  * @param <T> the Event Object type that will be appended to the Event Store
- *
- *  T may be unneeded now that EntryEvent record type has been introduced
  */
 public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K>>
                             implements Serializable, HazelcastInstanceAware {
@@ -65,60 +63,57 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         eventMap.set(key, event);
     }
 
-    // MSF functionality not yet implemented in ESF:
-    /** Materialize a domain object from the event store.  In normal operation this isn't
-     * used as we always keep an up-to-date materialized view, but in a recovery
-     * scenario where the in-memory copy is lost this will rebuild it.
-     *
-     * param predicate A SQL format 'where' clause that selects the desired objects
-     *                  from the event store.  Normally this would be in the form
-     *                  {keyname}={value}, but for special cases it could specify
-     *                  and condition.  Conditions that cause events for multiple
-     *                  keys to be returned are not likely to produce useful results.
-     * @return a domain object reflecting all Events
-     */
-    public D materialize(D startingWith, String keyValue) {
+
+    private D materialize(D startingWith, List<SourcedEvent<D,K>> events) {
         D materializedObject = startingWith;
-        List<SourcedEvent<D,K>> events = getEventsFor("key", keyValue);
         for (SourcedEvent<D,K> event: events) {
             materializedObject = event.apply(materializedObject);
         }
         return materializedObject;
     }
-//    public D materialize(String predicate) {
-//        // TODO: rework to use SQL rather than predicate API
-//        // TODO: what parameterization is missing that requires cast of event?
-//        D materializedObject = domainObjectConstructor.get();
-//        List<Long> keys = new ArrayList(eventMap.keySet(Predicates.sql(predicate)));
-//        Collections.sort(keys);
-//        for (Long sequence : keys) {
-//            EventEntry eventEntry = eventMap.get(sequence);
-//            T event = (T) eventEntry.event(); // SourcedEvent
-//            event.apply(materializedObject);
-//        }
-//        return materializedObject;
-//    }
 
-    /** Not sure this will remain public .. might have variations of materialize that
-     * pass different criteria into here as user shouldn't have to be passing around
-     * a SqlRow iterator
+
+    /** Materialize a domain object from the event store.  In normal operation this isn't
+     * used as we always keep an up-to-date materialized view, but in a recovery
+     * scenario where the in-memory copy is lost this will rebuild it.
      *
-     * @param keyName
-     * @param keyValue
-     * @return
+     * @param startingWith A domain object to which events will be applied; typically
+     *                     built by invoking the domain object's constructor
+     * @param keyValue the key value for the domain object's key
+     * @return a domain object reflecting all Events
      */
-    public List<SourcedEvent<D,K>> getEventsFor(String keyName, String keyValue) {
-        initSqlService();
-        // Having difficulty with parameter substitution in SqlStatement so just build
-        // our own query string
-        String all = "select * from " + eventMapName;
-        String query = "select * from " + eventMapName + " WHERE CAST(\"" +
-                keyName + "\" AS VARCHAR) = '" + keyValue + "' ORDER BY __key";
+    public D materialize(D startingWith, String keyValue, int count, long upToTimestamp) {
+        List<SourcedEvent<D,K>> events = getEventsFor(keyValue, count, upToTimestamp);
+        return materialize(startingWith, events);
+    }
 
-        SqlStatement statement = new SqlStatement(query);
-        //statement.setParameters(List.of(eventMapName, keyName, keyValue));
-        System.out.println("Query: " + statement);
-        SqlResult result = sqlService.execute(statement);
+    public D materialize(D startingWith, String keyValue) {
+        return materialize(startingWith, keyValue, Integer.MAX_VALUE, Long.MAX_VALUE);
+    }
+    public D materialize(D startingWith, String keyValue, int count) {
+        return materialize(startingWith, keyValue, count, Long.MAX_VALUE);
+
+    }
+    public D materialize (D startingWith, String keyValue, long upToTimestamp) {
+        return materialize(startingWith, keyValue, Integer.MAX_VALUE, upToTimestamp);
+    }
+
+    private List<SourcedEvent<D,K>> getEventsFor(String keyValue, int count, long upToTimestamp) {
+        initSqlService();
+
+//        String query = "select * from " + eventMapName + " WHERE CAST(\"key\" AS VARCHAR) = '" + keyValue + "' ORDER BY __key";
+//        SqlStatement statement = new SqlStatement(query);
+//        System.out.println(statement);
+//        SqlResult result = sqlService.execute(statement);
+
+        String SELECT_TEMPLATE = "select * from ? WHERE CAST(\"key\" AS VARCHAR) = '?' ORDER BY __key";
+        SqlStatement statement2 = new SqlStatement(SELECT_TEMPLATE)
+                .setParameters(List.of(eventMapName, keyValue));
+        System.out.println(statement2);
+        SqlResult result = sqlService.execute(statement2);
+
+        //SqlResult result = sqlService.execute(SELECT_TEMPLATE, List.of(eventMapName, keyValue));
+
         Iterator<SqlRow> iter = result.iterator();
         List<SourcedEvent<D,K>> events = new ArrayList<>();
         while (iter.hasNext()) {
@@ -128,8 +123,11 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
                 Class<? extends SourcedEvent<D,K>> k = (Class<? extends SourcedEvent<D, K>>) Class.forName(eventClass);
                 Constructor c = k.getConstructor(SqlRow.class);
                 SourcedEvent<D,K> event = (SourcedEvent) c.newInstance(row);
-                //System.out.println("Event created from SQL " + event);
+                if (event.getTimestamp() >= upToTimestamp)
+                    break;
                 events.add(event);
+                if (events.size() >= count)
+                    break;
             } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException | IllegalAccessException |
                      InvocationTargetException e) {
                 throw new RuntimeException(e);
@@ -148,59 +146,69 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         }
     }
 
-    public int getEventCountFor(String keyName, String keyValue) {
+    private long getEventCountFor(String keyName, String keyValue) {
         initSqlService();
-        String query = "select count(*) from " + eventMapName + " WHERE CAST(\"" +
-                keyName + "\" AS VARCHAR) = '" + keyValue;
-
+        String query = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
+                keyName + "\" AS VARCHAR) = '" + keyValue + "'";
         SqlStatement statement = new SqlStatement(query);
         System.out.println("Query: " + statement);
         SqlResult result = sqlService.execute(statement);
         Iterator<SqlRow> iter = result.iterator();
-        int count = -1;
+        long count = -1;
         while (iter.hasNext()) {
             SqlRow row = iter.next();
-            count = row.getObject("count");
+            count = row.getObject("event_count");
         }
         return count;
     }
 
-    public int compact(String keyName, String keyValue, float compressionPercentage) {
-        // TODO: ensure compressionPercentage < 1
-        int eventCount = getEventCountFor(keyName, keyValue);
-        int removalCount = (int) (eventCount * compressionPercentage);
-        System.out.println("Current count " + eventCount + " count to remove " + removalCount);
-        if (removalCount < 1) return 0;
-        // TODO: getEvents, add 'removalCount' entries to a list
-        // TODO: iterate the events building a materialized view
-        // TODO: convert the materialized view to a checkpoint/summary entry
-        // TODO: write the checkpoint record, using seq # of last-to-remove record as sequence
-        //       (this will overwrite that entry)
-        // TODO: remove all summarized records except the one that we just overwrote
-        return 0; // TODO: removalCount
+    // We have to iterate through to find the highest sequence number to be deleted
+    // since sequence numbers are not per-domain object
+    private void deleteOldestEvents(String keyValue, int count) {
+        initSqlService();
+        String query = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
+                "key\" AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
+        SqlStatement statement = new SqlStatement(query);
+        System.out.println("Query: " + statement);
+        SqlResult result = sqlService.execute(statement);
+        Iterator<SqlRow> iter = result.iterator();
+        long maxSequenceSeen = 0;
+        int index = 0;
+        while (iter.hasNext()) {
+            SqlRow row = iter.next();
+            PartitionedSequenceKey psk = row.getObject("psk");
+            if (psk.getSequence() == 0) {
+                System.out.println("Skipping compaction record when deleting old events");
+                continue;
+            }
+            maxSequenceSeen = psk.getSequence();
+            index++;
+            SourcedEvent removed = eventMap.remove(psk);
+            if (index >= count)
+                break;
+        }
     }
 
-//    public void compact(String predicate, float compressionPercentage) {
-//        // Note this shares a lot of code with materialize, should eventually
-//        // refactor to eliminate duplication
-//        D compressedData = domainObjectConstructor.get();
-//        List<Long> keys = new ArrayList(eventMap.keySet(Predicates.sql(predicate)));
-//        Collections.sort(keys);
-//        int entriesToCompress = (int) (keys.size() * compressionPercentage);
-//        System.out.println("Will compress " + entriesToCompress + " of " + keys.size() + " entries");
-//        long sequenceOfLastAppliedEvent = -1;
-//        for (int i=0; i<entriesToCompress; i++) {
-//            T accountEvent = eventMap.get(keys.get(i));
-//            accountEvent.apply(compressedData);
-//            eventMap.remove(accountEvent);
-//            sequenceOfLastAppliedEvent = keys.get(i);
-//        }
-//        // Now write the summarized object back into the slot of the last-compressed entry
-//        T checkpointEvent = (T) writeAsCheckpoint(compressedData, sequenceOfLastAppliedEvent);
-//        eventMap.put(sequenceOfLastAppliedEvent, checkpointEvent);
-//    }
-//
-//    abstract public SequencedEvent writeAsCheckpoint(D domainObject, long sequence);
+    public int compact(EventStoreCompactionEvent compactionEvent, D domainObject, String keyValue, double compressionFactor) {
+        if (compressionFactor >= 1) {
+            throw new IllegalArgumentException("Compression Factor must be < 1");
+        }
+        long eventCount = getEventCountFor("key", keyValue);
+        int removalCount = (int) (eventCount * compressionFactor);
+        System.out.println("Current count " + eventCount + " count to remove " + removalCount);
+        if (removalCount < 1) return 0;
+        List<SourcedEvent<D,K>> eventsToSummarize = getEventsFor(keyValue,
+                removalCount, Long.MAX_VALUE);
+        domainObject = materialize(domainObject, eventsToSummarize);
+        PartitionedSequenceKey psk = new PartitionedSequenceKey(0, keyValue);
+         compactionEvent.initFromDomainObject(domainObject);
+        // Since compaction event isn't processed thru pending -> pipeline, it doesn't get timestamp set
+        ((SourcedEvent)compactionEvent).setTimestamp(System.currentTimeMillis());
+        //compactionEvent.writeAsCheckpoint(domainObject, psk);
+        append(psk, (T) compactionEvent);
+        deleteOldestEvents(keyValue, removalCount);
+        return removalCount;
+    }
 
     @Override
     public void setHazelcastInstance(HazelcastInstance hazelcastInstance) {

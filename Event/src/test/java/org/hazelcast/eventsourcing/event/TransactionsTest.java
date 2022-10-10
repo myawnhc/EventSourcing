@@ -8,6 +8,7 @@ import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.testobjects.Account;
+import org.hazelcast.eventsourcing.testobjects.AccountCompactionEvent;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
 import org.hazelcast.eventsourcing.testobjects.BalanceChangeEvent;
@@ -117,5 +118,47 @@ public class TransactionsTest {
 
         Assertions.assertEquals(expectedBalance, a.getBalance());
         Assertions.assertEquals(101, consumer.getEventCount());
+    }
+
+    @Test
+    /** Same as transactions test, except we do verification, compact 50%, then
+     * verify again to ensure we get the same result.
+     */
+    void verifyCompaction() {
+        AccountConsumer consumer = new AccountConsumer();
+        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
+        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
+
+        // Open the account
+        OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));
+        controller.handleEvent(open);
+
+        BigDecimal expectedBalance = BigDecimal.valueOf(100.00); // Set to initial balance
+
+        // Throw transactions at the account
+        System.out.println("Sending " + testEvents.size() + " events");
+        for (int i=0; i<testEvents.size(); i++) {
+            AccountEvent event = testEvents.get(i);
+            System.out.println("Event " + i + " = " + event);
+            JSONObject jobj = new JSONObject(event.getPayload().getValue());
+            expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
+            controller.handleEvent(testEvents.get(i));
+        }
+
+        // Get a materialized view that reflects the event
+        EventStore<Account, String, AccountEvent> es = controller.getEventStore();
+        Account a = es.materialize(new Account(), TEST_ACCOUNT);
+
+        Assertions.assertEquals(expectedBalance, a.getBalance());
+        // This occasionally fails with count = 100 - maybe a timing window where we check before consumer receives final event?
+        Assertions.assertEquals(101, consumer.getEventCount());
+
+        es.compact(new AccountCompactionEvent(), new Account(), "67890", 0.5);
+        Account a2 = es.materialize(new Account(), TEST_ACCOUNT);
+
+        Assertions.assertEquals(expectedBalance, a2.getBalance());
+        // TODO: don't want messaging count here, but actual count ... haven't exposed
+        //  getEventsFor but might need to for this text.
+        //Assertions.assertEquals(51, consumer.getEventCount());
     }
 }
