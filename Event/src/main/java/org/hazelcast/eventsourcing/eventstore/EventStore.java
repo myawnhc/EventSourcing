@@ -82,23 +82,23 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
      * @param keyValue the key value for the domain object's key
      * @return a domain object reflecting all Events
      */
-    public D materialize(D startingWith, String keyValue, int count, long upToTimestamp) {
+    public D materialize(D startingWith, K keyValue, int count, long upToTimestamp) {
         List<SourcedEvent<D,K>> events = getEventsFor(keyValue, count, upToTimestamp);
         return materialize(startingWith, events);
     }
 
-    public D materialize(D startingWith, String keyValue) {
+    public D materialize(D startingWith, K keyValue) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, Long.MAX_VALUE);
     }
-    public D materialize(D startingWith, String keyValue, int count) {
+    public D materialize(D startingWith, K keyValue, int count) {
         return materialize(startingWith, keyValue, count, Long.MAX_VALUE);
 
     }
-    public D materialize (D startingWith, String keyValue, long upToTimestamp) {
+    public D materialize (D startingWith, K keyValue, long upToTimestamp) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, upToTimestamp);
     }
 
-    private List<SourcedEvent<D,K>> getEventsFor(String keyValue, int count, long upToTimestamp) {
+    private List<SourcedEvent<D,K>> getEventsFor(K keyValue, int count, long upToTimestamp) {
         initSqlService();
 
 //        String query = "select * from " + eventMapName + " WHERE CAST(\"key\" AS VARCHAR) = '" + keyValue + "' ORDER BY __key";
@@ -106,9 +106,12 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
 //        System.out.println(statement);
 //        SqlResult result = sqlService.execute(statement);
 
-        String SELECT_TEMPLATE = "select * from ? WHERE CAST(\"key\" AS VARCHAR) = '?' ORDER BY __key";
+        // Substitution of the table name via setParameters not supported as query validator
+        // needs to the real table name to verify column names, etc.
+        String SELECT_TEMPLATE = "select * from " + eventMapName +
+                " WHERE CAST(\"key\" AS VARCHAR) = ? ORDER BY __key";
         SqlStatement statement2 = new SqlStatement(SELECT_TEMPLATE)
-                .setParameters(List.of(eventMapName, keyValue));
+                .setParameters(List.of(keyValue));
         System.out.println(statement2);
         SqlResult result = sqlService.execute(statement2);
 
@@ -146,7 +149,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         }
     }
 
-    private long getEventCountFor(String keyName, String keyValue) {
+    private long getEventCountFor(String keyName, K keyValue) {
         initSqlService();
         String query = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
                 keyName + "\" AS VARCHAR) = '" + keyValue + "'";
@@ -164,7 +167,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
 
     // We have to iterate through to find the highest sequence number to be deleted
     // since sequence numbers are not per-domain object
-    private void deleteOldestEvents(String keyValue, int count) {
+    private void deleteOldestEvents(K keyValue, int count) {
         initSqlService();
         String query = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
                 "key\" AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
@@ -189,7 +192,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         }
     }
 
-    public int compact(EventStoreCompactionEvent compactionEvent, D domainObject, String keyValue, double compressionFactor) {
+    public int compact(EventStoreCompactionEvent compactionEvent, D domainObject, K keyValue, double compressionFactor) {
         if (compressionFactor >= 1) {
             throw new IllegalArgumentException("Compression Factor must be < 1");
         }
