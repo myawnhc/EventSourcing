@@ -21,19 +21,15 @@ import java.math.BigDecimal;
 
 public class OpenAccountTest {
 
-    //static EventStore<Account, String, AccountEvent> store;
     static EventSourcingController<Account, String, AccountEvent> controller;
     static SubscriptionManager<AccountEvent> submgr;
     static HazelcastInstance hazelcast;
 
     @BeforeAll
     static void init() {
-        // Create event store
+        // Create Hazelcast structures
         hazelcast = Hazelcast.newHazelcastInstance();
-
-        //store = new EventStore<>("accountMap", "accountID", Account::new, embedded);
         controller = EventSourcingController.newBuilder(hazelcast, "account")
-//                .domainObjectConstructor(Account::new)
                 .build();
 
         // Create subscription manager, register it
@@ -42,7 +38,10 @@ public class OpenAccountTest {
     }
 
     @AfterAll
-    static void cleanUp() {}
+    static void cleanUp() {
+        controller.shutdown(); // Cancels the EventSourcingPipeline job
+        hazelcast.shutdown();  // could move this into controller shutdown
+    }
 
     @BeforeEach
     void setUp() {}

@@ -17,6 +17,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.logging.Logger;
 
 /** Hazelcast-centric implementation of an Event Store to support the Event Sourcing
  *  microservice pattern (@see https://microservices.io/patterns/data/event-sourcing.html)
@@ -33,15 +34,16 @@ import java.util.List;
  *
  * @param <D> the Domain object which is updated by the event sequence
  * @param <K> the type of the key of the domain object
- * @param <T> the Event Object type that will be appended to the Event Store
+ * @param <E> the Event Object type that will be appended to the Event Store
  */
-public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K>>
+public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K>>
                             implements Serializable, HazelcastInstanceAware {
 
     transient protected HazelcastInstance hazelcast;
+    private static final Logger logger = Logger.getLogger(EventStore.class.getName());
 
     protected String eventMapName;
-    transient protected IMap<PartitionedSequenceKey, T> eventMap;
+    transient protected IMap<PartitionedSequenceKey, E> eventMap;
     transient protected SqlService sqlService;
 
     private String mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
@@ -59,7 +61,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(mapName);
     }
 
-    public void append(PartitionedSequenceKey key, T event) {
+    public void append(PartitionedSequenceKey key, E event) {
         eventMap.set(key, event);
     }
 
@@ -101,21 +103,14 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
     private List<SourcedEvent<D,K>> getEventsFor(K keyValue, int count, long upToTimestamp) {
         initSqlService();
 
-//        String query = "select * from " + eventMapName + " WHERE CAST(\"key\" AS VARCHAR) = '" + keyValue + "' ORDER BY __key";
-//        SqlStatement statement = new SqlStatement(query);
-//        System.out.println(statement);
-//        SqlResult result = sqlService.execute(statement);
-
         // Substitution of the table name via setParameters not supported as query validator
         // needs to the real table name to verify column names, etc.
-        String SELECT_TEMPLATE = "select * from " + eventMapName +
+        String selectQuery = "select * from " + eventMapName +
                 " WHERE CAST(\"key\" AS VARCHAR) = ? ORDER BY __key";
-        SqlStatement statement2 = new SqlStatement(SELECT_TEMPLATE)
+        SqlStatement statement2 = new SqlStatement(selectQuery)
                 .setParameters(List.of(keyValue));
-        System.out.println(statement2);
+        //logger.info("Select Events Query: " + statement2);
         SqlResult result = sqlService.execute(statement2);
-
-        //SqlResult result = sqlService.execute(SELECT_TEMPLATE, List.of(eventMapName, keyValue));
 
         Iterator<SqlRow> iter = result.iterator();
         List<SourcedEvent<D,K>> events = new ArrayList<>();
@@ -151,10 +146,10 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
 
     private long getEventCountFor(String keyName, K keyValue) {
         initSqlService();
-        String query = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
+        String countQuery = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
                 keyName + "\" AS VARCHAR) = '" + keyValue + "'";
-        SqlStatement statement = new SqlStatement(query);
-        System.out.println("Query: " + statement);
+        SqlStatement statement = new SqlStatement(countQuery);
+        //logger.info("Count query: " + statement);
         SqlResult result = sqlService.execute(statement);
         Iterator<SqlRow> iter = result.iterator();
         long count = -1;
@@ -169,10 +164,10 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
     // since sequence numbers are not per-domain object
     private void deleteOldestEvents(K keyValue, int count) {
         initSqlService();
-        String query = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
+        String selectOldest = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
                 "key\" AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
-        SqlStatement statement = new SqlStatement(query);
-        System.out.println("Query: " + statement);
+        SqlStatement statement = new SqlStatement(selectOldest);
+        //logger.info("Select Oldest: " + statement);
         SqlResult result = sqlService.execute(statement);
         Iterator<SqlRow> iter = result.iterator();
         long maxSequenceSeen = 0;
@@ -181,7 +176,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
             SqlRow row = iter.next();
             PartitionedSequenceKey psk = row.getObject("psk");
             if (psk.getSequence() == 0) {
-                System.out.println("Skipping compaction record when deleting old events");
+                logger.info("Skipping compaction record when deleting old events");
                 continue;
             }
             maxSequenceSeen = psk.getSequence();
@@ -198,7 +193,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         }
         long eventCount = getEventCountFor("key", keyValue);
         int removalCount = (int) (eventCount * compressionFactor);
-        System.out.println("Current count " + eventCount + " count to remove " + removalCount);
+        logger.info("Current count " + eventCount + " count to remove " + removalCount);
         if (removalCount < 1) return 0;
         List<SourcedEvent<D,K>> eventsToSummarize = getEventsFor(keyValue,
                 removalCount, Long.MAX_VALUE);
@@ -208,7 +203,7 @@ public class EventStore<D extends DomainObject<K>, K, T extends SourcedEvent<D,K
         // Since compaction event isn't processed thru pending -> pipeline, it doesn't get timestamp set
         ((SourcedEvent)compactionEvent).setTimestamp(System.currentTimeMillis());
         //compactionEvent.writeAsCheckpoint(domainObject, psk);
-        append(psk, (T) compactionEvent);
+        append(psk, (E) compactionEvent);
         deleteOldestEvents(keyValue, removalCount);
         return removalCount;
     }
