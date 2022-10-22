@@ -29,7 +29,7 @@ public class OpenAccountTest {
     static void init() {
         // Create Hazelcast structures
         hazelcast = Hazelcast.newHazelcastInstance();
-        controller = EventSourcingController.newBuilder(hazelcast, "account")
+        controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
                 .build();
 
         // Create subscription manager, register it

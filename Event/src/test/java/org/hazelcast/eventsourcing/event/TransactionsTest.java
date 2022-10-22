@@ -37,6 +37,11 @@ public class TransactionsTest {
 
     @BeforeAll
     static void init() {
+        hazelcast = Hazelcast.newHazelcastInstance();
+        controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
+                .build();
+
+
         testEvents = new ArrayList<>();
         for (int i=0; i<TEST_EVENT_COUNT; i++) {
             // Generate test events
@@ -66,14 +71,15 @@ public class TransactionsTest {
     }
 
     @AfterAll
-    static void cleanUp() {}
+    static void cleanUp() {
+        controller.shutdown();
+        hazelcast.shutdown();
+    }
+
+    private static int testNumber = 0;
 
     @BeforeEach
     void setUp() {
-        hazelcast = Hazelcast.newHazelcastInstance();
-        controller = EventSourcingController.newBuilder(hazelcast, "account")
-                .build();
-
         // Create subscription manager, register it
         submgr = new ReliableTopicSubMgr<>();
         SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
@@ -84,22 +90,17 @@ public class TransactionsTest {
     void tearDown() {
         SubscriptionManager.unregister(hazelcast, OpenAccountEvent.class, submgr);
         SubscriptionManager.unregister(hazelcast, BalanceChangeEvent.class, submgr);
-        controller.shutdown();
-        Hazelcast.shutdownAll();
-        // Subsequent test will fail with HazelcastInstanceNotActive . let this one
-        // fully clear before we start the next test
-//        try {
-//            Thread.sleep(15000);
-//        } catch (InterruptedException e) {
-//            throw new RuntimeException(e);
-//        }
+
+        controller.getEventStore().clearData();
     }
 
     @Test
     void verifyTransactions() {
         AccountConsumer consumer = new AccountConsumer();
-        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
-        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
+        int offset = testNumber * TEST_EVENT_COUNT;
+        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
+        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
+        testNumber++;
 
         // Open the account
         OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));
@@ -136,8 +137,10 @@ public class TransactionsTest {
      */
     void verifyCompaction() {
         AccountConsumer consumer = new AccountConsumer();
-        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
-        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
+        int offset = testNumber * TEST_EVENT_COUNT;
+        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
+        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
+        testNumber++;
 
         // Open the account
         OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));

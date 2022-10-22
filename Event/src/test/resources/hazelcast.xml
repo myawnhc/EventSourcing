@@ -20,7 +20,9 @@
     </serialization>
 
     <map name="*_PENDING">
-        <event-journal enabled="true"></event-journal>
+        <event-journal enabled="true">
+            <capacity>50000</capacity>
+        </event-journal>
         <indexes>
             <index>
                 <attributes>

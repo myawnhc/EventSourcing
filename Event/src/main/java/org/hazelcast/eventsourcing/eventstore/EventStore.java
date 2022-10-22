@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /** Hazelcast-centric implementation of an Event Store to support the Event Sourcing
- *  microservice pattern (@see https://microservices.io/patterns/data/event-sourcing.html)
+ *  microservice pattern (@see <a href="https://microservices.io/patterns/data/event-sourcing.html">...</a>)
  *  An 'event' is a representation of state changes made to the domain object during the
  *  execution of business logic.  Rather than persisting the current, up-to-date view of
  *  a domain object, in Event Sourcing we instead persist the sequence of state changes
@@ -43,7 +43,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     private static final Logger logger = Logger.getLogger(EventStore.class.getName());
 
     protected String eventMapName;
-    transient protected IMap<PartitionedSequenceKey, E> eventMap;
+    transient protected IMap<PartitionedSequenceKey<K>, E> eventMap;
     transient protected SqlService sqlService;
 
     private String mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
@@ -61,7 +61,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(mapName);
     }
 
-    public void append(PartitionedSequenceKey key, E event) {
+    public void append(PartitionedSequenceKey<K> key, E event) {
         eventMap.set(key, event);
     }
 
@@ -119,8 +119,8 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
             String eventClass = row.getObject("eventClass");
             try {
                 Class<? extends SourcedEvent<D,K>> k = (Class<? extends SourcedEvent<D, K>>) Class.forName(eventClass);
-                Constructor c = k.getConstructor(SqlRow.class);
-                SourcedEvent<D,K> event = (SourcedEvent) c.newInstance(row);
+                Constructor<? extends SourcedEvent<D, K>> c = k.getConstructor(SqlRow.class);
+                SourcedEvent<D,K> event = c.newInstance(row);
                 if (event.getTimestamp() >= upToTimestamp)
                     break;
                 events.add(event);
@@ -144,10 +144,10 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         }
     }
 
-    private long getEventCountFor(String keyName, K keyValue) {
+    private long getEventCountFor(K keyValue) {
         initSqlService();
         String countQuery = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
-                keyName + "\" AS VARCHAR) = '" + keyValue + "'";
+                "key" + "\" AS VARCHAR) = '" + keyValue + "'";
         SqlStatement statement = new SqlStatement(countQuery);
         //logger.info("Count query: " + statement);
         SqlResult result = sqlService.execute(statement);
@@ -170,38 +170,36 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         //logger.info("Select Oldest: " + statement);
         SqlResult result = sqlService.execute(statement);
         Iterator<SqlRow> iter = result.iterator();
-        long maxSequenceSeen = 0;
         int index = 0;
         while (iter.hasNext()) {
             SqlRow row = iter.next();
-            PartitionedSequenceKey psk = row.getObject("psk");
+            PartitionedSequenceKey<K> psk = row.getObject("psk");
             if (psk.getSequence() == 0) {
                 logger.info("Skipping compaction record when deleting old events");
                 continue;
             }
-            maxSequenceSeen = psk.getSequence();
             index++;
-            SourcedEvent removed = eventMap.remove(psk);
+            eventMap.remove(psk);
             if (index >= count)
                 break;
         }
     }
 
-    public int compact(EventStoreCompactionEvent compactionEvent, D domainObject, K keyValue, double compressionFactor) {
+    public int compact(EventStoreCompactionEvent<D> compactionEvent, D domainObject, K keyValue, double compressionFactor) {
         if (compressionFactor >= 1) {
             throw new IllegalArgumentException("Compression Factor must be < 1");
         }
-        long eventCount = getEventCountFor("key", keyValue);
+        long eventCount = getEventCountFor(keyValue);
         int removalCount = (int) (eventCount * compressionFactor);
         logger.info("Current count " + eventCount + " count to remove " + removalCount);
         if (removalCount < 1) return 0;
         List<SourcedEvent<D,K>> eventsToSummarize = getEventsFor(keyValue,
                 removalCount, Long.MAX_VALUE);
         domainObject = materialize(domainObject, eventsToSummarize);
-        PartitionedSequenceKey psk = new PartitionedSequenceKey(0, keyValue);
+        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(0, keyValue);
          compactionEvent.initFromDomainObject(domainObject);
         // Since compaction event isn't processed thru pending -> pipeline, it doesn't get timestamp set
-        ((SourcedEvent)compactionEvent).setTimestamp(System.currentTimeMillis());
+        ((SourcedEvent<D,K>)compactionEvent).setTimestamp(System.currentTimeMillis());
         //compactionEvent.writeAsCheckpoint(domainObject, psk);
         append(psk, (E) compactionEvent);
         deleteOldestEvents(keyValue, removalCount);
@@ -214,5 +212,10 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         // re-init stuff set on the client side
         this.hazelcast = hazelcastInstance;
         this.eventMap = hazelcast.getMap(eventMapName);
+    }
+
+    // No reason to ever call this in production ... used in unit tests
+    public void clearData() {
+        this.eventMap.clear();
     }
 }

@@ -28,7 +28,7 @@ import java.util.logging.Logger;
  */
 
 public class EventSourcingController<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> {
-    private HazelcastInstance hazelcast;
+    private final HazelcastInstance hazelcast;
     private String domainObjectName;
     public String getDomainObjectName() { return domainObjectName; } // used to name pipeline job
     private static Logger logger = null; // assigned in static initializer
@@ -58,7 +58,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     // Pending Queue / Map config
     private String pendingEventsMapName;
-    private IMap<PartitionedSequenceKey, SourcedEvent> pendingEventsMap;
+    private IMap<PartitionedSequenceKey<K>, SourcedEvent<D,K>> pendingEventsMap;
 
     // Pipeline
     private Job pipelineJob;
@@ -78,11 +78,11 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     /////////////
     // Builder
     /////////////
-    public static class EventSourcingControllerBuilder<D extends DomainObject<K>, K> {
-        private EventSourcingController controller;
+    public static class EventSourcingControllerBuilder<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> {
+        private final EventSourcingController<D,K,E> controller;
 
         public EventSourcingControllerBuilder(HazelcastInstance hazelcast, String domainObjectName) {
-            this.controller = new EventSourcingController(hazelcast);
+            this.controller = new EventSourcingController<>(hazelcast);
             this.controller.domainObjectName = domainObjectName;
             // Set default names
             this.controller.sequenceGeneratorName = domainObjectName + "_SEQ";
@@ -94,7 +94,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         ///////////////////////
         // Sequence Generator
         ///////////////////////
-        public EventSourcingControllerBuilder sequenceGeneratorName(String name) {
+        public EventSourcingControllerBuilder<D,K,E> sequenceGeneratorName(String name) {
             controller.sequenceGeneratorName = name;
             return this;
         }
@@ -107,7 +107,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         // Event Store
         ///////////////////////
 
-        public EventSourcingControllerBuilder eventStoreName(String name) {
+        public EventSourcingControllerBuilder<D,K,E> eventStoreName(String name) {
             controller.eventStoreName = name;
             return this;
         }
@@ -120,14 +120,13 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         // TODO: spill-to-disk enablement (maybe related to compaction policy)
 
         private void buildEventStore() {
-            EventStore es = new EventStore(controller.eventStoreName, controller.hazelcast);
-            controller.eventStore = es;
+            controller.eventStore = new EventStore<>(controller.eventStoreName, controller.hazelcast);
         }
 
         ///////////////////////
         // Materialized View
         ///////////////////////
-        public EventSourcingControllerBuilder viewMapName(String name) {
+        public EventSourcingControllerBuilder<D,K,E> viewMapName(String name) {
             controller.viewMapName = name;
             return this;
         }
@@ -138,7 +137,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         ///////////////////////
         // Pending Events
         ///////////////////////
-        public EventSourcingControllerBuilder pendingEventsMapName(String name) {
+        public EventSourcingControllerBuilder<D,K,E> pendingEventsMapName(String name) {
             controller.pendingEventsMapName = name;
             return this;
         }
@@ -159,12 +158,12 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         // Pipeline
         ///////////////////////
         private void startPipelineJob() {
-            EventSourcingPipeline<D,K> esp = new EventSourcingPipeline(controller);
+            EventSourcingPipeline<D,K,E> esp = new EventSourcingPipeline<>(controller);
             controller.pipelineJob = esp.call();
         }
 
 
-        public EventSourcingController build() {
+        public EventSourcingController<D,K,E> build() {
             logger.info("Building SequenceGenerator");
             buildSequenceGenerator();
             logger.info("Building EventStore");
@@ -174,14 +173,14 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             logger.info("Building pending events map");
             buildPendingMap();
             logger.info("Starting pipeline");
-            startPipelineJob();;
+            startPipelineJob();
             return controller;
         }
     }
 
 
-    public static EventSourcingControllerBuilder newBuilder(HazelcastInstance hz, String domainObjectName) {
-        return new EventSourcingControllerBuilder(hz, domainObjectName);
+    public static <D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> EventSourcingControllerBuilder<D,K,E> newBuilder(HazelcastInstance hz, String domainObjectName) {
+        return new EventSourcingControllerBuilder<D,K,E>(hz, domainObjectName);
     }
 
     private EventSourcingController(HazelcastInstance hazelcast) {
@@ -193,7 +192,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     public void handleEvent(SourcedEvent<D,K> event) {
         long sequence = getNextSequence();
-        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey(sequence, event.getKey());
+        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
         //logger.info("handleEvent: PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
         pendingEventsMap.put(psk, event);
     }
@@ -214,9 +213,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     public void shutdown() {
         try {
             pipelineJob.cancel();
-            pipelineJob.join();
+            //pipelineJob.join();
         } catch (CancellationException ce) {
             // ignore
+            //ce.printStackTrace();
         }
     }
 }

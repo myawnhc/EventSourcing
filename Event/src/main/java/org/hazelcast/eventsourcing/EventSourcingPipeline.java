@@ -27,14 +27,14 @@ import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
  * @param <D> Domain object type
  * @param <K> Domain object key type
  */
-public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Callable<Job> {
+public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> implements Callable<Job> {
 
-    private EventSourcingController controller;
-    private String pendingEventsMapName;
+    private final EventSourcingController<D,K,E> controller;
+    private final String pendingEventsMapName;
     private static final Logger logger = Logger.getLogger(EventSourcingPipeline.class.getName());
 
 
-    public EventSourcingPipeline(EventSourcingController controller) {
+    public EventSourcingPipeline(EventSourcingController<D,K,E> controller) {
         this.controller = controller;
         this.pendingEventsMapName = controller.getPendingEventsMapName();
     }
@@ -47,8 +47,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Call
         jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
         while (true) {
             try {
-                Job j = controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
-                return j;
+                return controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
             } catch (RetryableHazelcastException rte) {
                 // Seen: com.hazelcast.spi.exception.RetryableHazelcastException:
                 // Cannot submit job with name '<jobname>' before the master node initializes job coordination service's state
@@ -60,8 +59,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Call
     public Pipeline createPipeline() {
 
         // Event Store as a service
-        EventStore eventStore = controller.getEventStore();
-        ServiceFactory<?, EventStore> eventStoreServiceFactory =
+        EventStore<D,K,E> eventStore = controller.getEventStore();
+        ServiceFactory<?, EventStore<D,K,E>> eventStoreServiceFactory =
                 ServiceFactories.sharedService((ctx) -> eventStore);
 
         // IMap/Materialized View as a service --
@@ -74,15 +73,14 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Call
 
         Pipeline p = Pipeline.create();
         p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
-                // Note: ingestion timestamps will cause reordering, and we don't need them.
                 .withoutTimestamps()
                 // Update SourcedEvent with timestamp.  Forcing local parallelism to 1 for this
                 // stage as otherwise we may receive events out of order; in most cases this is
                 // OK but in a few cases, like account transasction ahead of account being opened,
                 // can lead to failures
                 .map(pendingEvent -> {
-                    PartitionedSequenceKey<K> psk = (PartitionedSequenceKey) pendingEvent.getKey();
-                    logger.info("Pipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
+                    PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
+                    //logger.info("Pipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
                     SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
@@ -91,7 +89,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K> implements Call
                 .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1();
-                    eventstore.append(key, event);
+                    eventstore.append(key, (E) event);
                     return event;
                 }).setName("Persist Event to event store")
                 // Update materialized view (using EntryProcessor)
