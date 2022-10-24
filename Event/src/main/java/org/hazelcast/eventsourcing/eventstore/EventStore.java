@@ -61,11 +61,25 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(mapName);
     }
 
+    /** Append an event to the event store
+     *
+     * @param key key used to uniquely identify the event
+     * @param event the event to be stored
+     */
     public void append(PartitionedSequenceKey<K> key, E event) {
         eventMap.set(key, event);
     }
 
 
+    /** Materialize a view of the domain object using the provided event list.  Internally
+     * used by compaction and other materialize methods.
+     *
+     * @param startingWith a domain object to which events will be applied; this is
+     *                     generally produced by calling the domain object constructor
+     * @param events a list of events to apply to the starting object to produce the
+     *               materialized view
+     * @return the materialized domain object
+     */
     private D materialize(D startingWith, List<SourcedEvent<D,K>> events) {
         D materializedObject = startingWith;
         for (SourcedEvent<D,K> event: events) {
@@ -82,20 +96,54 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      * @param startingWith A domain object to which events will be applied; typically
      *                     built by invoking the domain object's constructor
      * @param keyValue the key value for the domain object's key
-     * @return a domain object reflecting all Events
+     * @param count the maximum number of events to be applied.  Typically only one of count or
+     *              upToTimestamp will be supplied.
+     * @param upToTimestamp the time which the materialized view is intended to reflect;
+     *                      events prior to or equal to this timestamp will be applied, and
+     *                      events with later timestamps will be ignored.
+     * @return a domain object reflecting the qualifying Events
      */
-    public D materialize(D startingWith, K keyValue, int count, long upToTimestamp) {
+    private D materialize(D startingWith, K keyValue, int count, long upToTimestamp) {
         List<SourcedEvent<D,K>> events = getEventsFor(keyValue, count, upToTimestamp);
         return materialize(startingWith, events);
     }
 
+    /** Materialize a domain object from the event store.  In normal operation this isn't
+     * used as we always keep an up-to-date materialized view, but in a recovery
+     * scenario where the in-memory copy is lost this will rebuild it.
+     *
+     * @param startingWith A domain object to which events will be applied; typically
+     *             built by invoking the domain object's constructor
+     * @param keyValue the key value for the domain object's key
+     * @return a domain object reflecting all events for the domain object
+     */
     public D materialize(D startingWith, K keyValue) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, Long.MAX_VALUE);
     }
+
+    /** Materialize a domain object from the event store. t.
+     *
+     * @param startingWith A domain object to which events will be applied; typically
+     *                     built by invoking the domain object's constructor
+     * @param keyValue the key value for the domain object's key
+     * @param count the maximum number of events to be applied.  Typically only one of count or
+     *              upToTimestamp will be supplied.
+     * @return a domain object reflecting the qualifying Events
+     */
     public D materialize(D startingWith, K keyValue, int count) {
         return materialize(startingWith, keyValue, count, Long.MAX_VALUE);
-
     }
+
+    /** Materialize a domain object from the event store.
+     *
+     * @param startingWith A domain object to which events will be applied; typically
+     *                     built by invoking the domain object's constructor
+     * @param keyValue the key value for the domain object's key
+     * @param upToTimestamp the time which the materialized view is intended to reflect;
+     *                      events prior to or equal to this timestamp will be applied, and
+     *                      events with later timestamps will be ignored.
+     * @return a domain object reflecting the qualifying Events
+     */
     public D materialize (D startingWith, K keyValue, long upToTimestamp) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, upToTimestamp);
     }
@@ -185,6 +233,23 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         }
     }
 
+    /** Compact the event store by merging a sequence of events into a single
+     * summary record.  Used to reduce the memory footprint of the event store; generally
+     * not used when tiered store / spill to disk is enabled for the event store, but since
+     * tiered storage is a feature of Hazelcast Enterprise Edition, this is an alternative
+     * for open source deployments.
+     * @param compactionEvent a newly-initialized compaction event object; since these are
+     *                        subclasses of the domain object base class event they cannot
+     *                        be instantiated directly by the framework
+     * @param domainObject a newly-initialized domain object
+     * @param keyValue the key value for which events should be compressed
+     * @param compressionFactor the compression factor to use; value must be less than 1 and
+     *                          represents the percentage of events to be compressed and
+     *                          removed, e.g .50 for 50%, .75 for 75%, etc.
+     * @return the number of events which were commpressed and removed (although one new
+     * event will be added to the event store which summarizes the content of the removed
+     * events)
+     */
     public int compact(EventStoreCompactionEvent<D> compactionEvent, D domainObject, K keyValue, double compressionFactor) {
         if (compressionFactor >= 1) {
             throw new IllegalArgumentException("Compression Factor must be < 1");
@@ -214,7 +279,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(eventMapName);
     }
 
-    // No reason to ever call this in production ... used in unit tests
+    /** Used by some unit tests; no reason to ever call this in production  */
     public void clearData() {
         this.eventMap.clear();
     }

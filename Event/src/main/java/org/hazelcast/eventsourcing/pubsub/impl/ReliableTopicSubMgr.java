@@ -12,6 +12,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Logger;
 
+/** Implementation of the SubscriptionManager using Hazelcast Reliable Topic as the
+ * messaging backbone
+ * @param <E> base class of events to be passed as messages
+ */
 public class ReliableTopicSubMgr<E> extends SubscriptionManager<E> {
 
     // Is this safely kept locally, or does it need to be an IMap?

@@ -39,6 +39,10 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         this.pendingEventsMapName = controller.getPendingEventsMapName();
     }
 
+    /** Create the pipeline job and submit it for execution.
+     *
+     * @return the Job submitted to the cluster 
+     */
     @Override
     public Job call() {
         Pipeline p = createPipeline();
@@ -56,7 +60,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         }
     }
 
-    public Pipeline createPipeline() {
+    private Pipeline createPipeline() {
 
         // Event Store as a service
         EventStore<D,K,E> eventStore = controller.getEventStore();

@@ -26,17 +26,18 @@ import java.util.logging.Logger;
  * @param <K> the type of the key of the domain object
  * @param <E> the Event Object type that will be appended to the Event Store
  */
-
 public class EventSourcingController<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> {
     private final HazelcastInstance hazelcast;
     private String domainObjectName;
+    /** Return the name of the domain object passed in to the Builder */
     public String getDomainObjectName() { return domainObjectName; } // used to name pipeline job
     private static Logger logger = null; // assigned in static initializer
 
     // Sequence Generator
     private String sequenceGeneratorName;
     private IAtomicLong sequenceGenerator;
-    public Long getNextSequence() {
+    /** Return the next sequence number to be used for events */
+    private Long getNextSequence() {
         return sequenceGenerator.incrementAndGet();
     }
 
@@ -44,6 +45,12 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     private String eventStoreName;
     /* Future - settings for compaction and spill-to-disk */
     private EventStore<D, K, E> eventStore;
+
+    /** Return a reference to the EventStore.  Useful if you need to materialize an
+     * object with a subset of the published events, but in typical operation there
+     * isn't a need to access the event store directly.
+     * @return the EventStore associated with this controller.
+     */
     public EventStore<D, K, E> getEventStore() {
         return eventStore;
     }
@@ -178,7 +185,18 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         }
     }
 
-
+    /** Return a builder that can be used to instantiate a new controller.  The builder allows control
+     * over the names of the various structures built by the controller, but these all have reasonable
+     * defaults so in most cases, instantiating the builder with the domain object name and then
+     * calling build() will be all that is needed.
+     *
+     * @param hz Hazelast instance that will host the data structures
+     * @param domainObjectName name of the domain object; all lower-case is preferred.
+     * @return a Builder initialized with reasonable defaults for all controller object names.
+     * @param <D>
+     * @param <K>
+     * @param <E>
+     */
     public static <D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> EventSourcingControllerBuilder<D,K,E> newBuilder(HazelcastInstance hz, String domainObjectName) {
         return new EventSourcingControllerBuilder<D,K,E>(hz, domainObjectName);
     }
@@ -190,6 +208,19 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     public String getPendingEventsMapName() { return pendingEventsMapName; }
     public HazelcastInstance getHazelcast() { return hazelcast; }
 
+    /** Handle the event.  The event will be inserted into the Pending Events map for the
+     * domain object, which will in turn trigger the pipeline job that handles the
+     * event.  See the EventSourcingPipeline for details, but basic steps in handling the
+     * event include
+     * <bl>
+     *     <li>Assign a unique sequence number to the event and timestamp it</li>
+     *     <li>Append the event to the event store</li>
+     *     <li>Update the domain object's materialized view with the event </li>
+     *     <li>Notify any observers/subscribers to the event that the event occurred</li>
+     *     <li>Remove the event from the pending events map</li>
+     * </bl>
+     * @param event
+     */
     public void handleEvent(SourcedEvent<D,K> event) {
         long sequence = getNextSequence();
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
@@ -197,7 +228,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         pendingEventsMap.put(psk, event);
     }
 
-    /** Unclear if this will stick around ... originally added to try to resolve issue in
+    /* Unclear if this will stick around ... originally added to try to resolve issue in
      * unit tests where shutting down cluster, followed by quick start of new cluster with
      * same config, would throw some weird errors ... so trying to shut down more cleanly
      * in hopes that the newly-started cluster won't complain.

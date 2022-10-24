@@ -29,6 +29,13 @@ public class PartitionedSequenceKey<K> implements PartitionAware<K>, Comparable<
         return sequence;
     }
 
+    /** By implementing PartitionAware, keys for a domain object will be kept together on the
+     * same cluster node. This improves performance of the materialize methods of the
+     * EventStore as well as many queries; in addition it ensures that the MapJournal of
+     * the Pending Events Map will be seen in order (as ordering of the map journal is not
+     * maintained across partitions).
+     * @return the partition key, which happens to be the domain object
+     */
     @Override
     public K getPartitionKey() {
         return domainObjectKey;
