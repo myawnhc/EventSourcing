@@ -1,0 +1,7 @@
+<component name="CopyrightManager">
+  <settings default="Hazelcast">
+    <module2copyright>
+      <element module="All" copyright="Hazelcast" />
+    </module2copyright>
+  </settings>
+</component>
