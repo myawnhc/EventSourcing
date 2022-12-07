@@ -111,10 +111,11 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1();
                     eventstore.append(key, (E) event);
-                    return event;
+                    return tuple2;
                 }).setName("Persist Event to event store")
                 // Update materialized view (using EntryProcessor)
-                .mapUsingService(materializedViewServiceFactory, (viewMap, event) -> {
+                .mapUsingService(materializedViewServiceFactory, (viewMap, tuple2) -> {
+                    SourcedEvent<D,K> event = tuple2.f1();
                     viewMap.executeOnKey(event.getKey(), (EntryProcessor<K, D, D>) viewEntry -> {
                         D domainObject = viewEntry.getValue();
                         //K domainObjectKey = viewEntry.getKey();
@@ -122,15 +123,17 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                         viewEntry.setValue(domainObject);
                         return domainObject;
                     });
-                    return event;
+                    return tuple2;
                 }).setName("Update Materialized View")
                 // Broadcast the event to all subscribers
-                .map(event -> {
+                .map(tuple2 -> {
+                    SourcedEvent<D,K> event = tuple2.f1();
                     event.publish();
-                    return event;
+                    return tuple2;
                 }).setName("Publish event to all subscribers")
                 // Delete event from the pending events map
-                .mapUsingService(pendingMapServiceFactory, (pendingMap, event) -> {
+                .mapUsingService(pendingMapServiceFactory, (pendingMap, tuple2) -> {
+                    SourcedEvent<D,K> event = tuple2.f1();
                     pendingMap.delete(event.getKey());
                     return event;
                 }).setName("Remove event from pending events")

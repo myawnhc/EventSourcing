@@ -66,4 +66,25 @@ public class PartitionedSequenceKey<K> implements PartitionAware<K>, Comparable<
         }
         throw new IllegalArgumentException();
     }
+
+    @Override
+    public int hashCode() {
+        return domainObjectKey.hashCode() + (int) sequence;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        // needs JDK14: if (other instanceof PartitionedSequenceKey oKey) {
+        if (other instanceof PartitionedSequenceKey) {
+            PartitionedSequenceKey oKey = (PartitionedSequenceKey) other;
+            // domainObjectKey should never be null
+            return oKey.domainObjectKey.equals(domainObjectKey) && oKey.sequence == sequence;
+        }
+        return false;
+    }
+
+    @Override
+    public String toString() {
+        return "PartitionedSequenceKey Key: " + domainObjectKey + " Seq: " + sequence;
+    }
 }

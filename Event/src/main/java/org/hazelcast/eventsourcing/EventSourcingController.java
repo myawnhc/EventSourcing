@@ -22,11 +22,11 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.jet.Job;
 import com.hazelcast.map.IMap;
-import org.hazelcast.eventsourcing.dynamicconfig.EnableMapJournal;
 import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
+import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
 import java.io.InputStream;

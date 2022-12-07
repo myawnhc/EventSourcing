@@ -15,7 +15,7 @@
  * Vestibulum commodo. Ut rhoncus gravida arcu.
  */
 
-package org.hazelcast.eventsourcing.dynamicconfig;
+package org.hazelcast.eventsourcing.viridiancfg;
 
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.core.HazelcastInstance;
