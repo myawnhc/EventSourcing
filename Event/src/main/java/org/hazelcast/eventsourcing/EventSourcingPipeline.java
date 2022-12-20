@@ -133,8 +133,17 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 }).setName("Publish event to all subscribers")
                 // Delete event from the pending events map
                 .mapUsingService(pendingMapServiceFactory, (pendingMap, tuple2) -> {
-                    SourcedEvent<D,K> event = tuple2.f1();
-                    pendingMap.delete(event.getKey());
+                    boolean debugRemoval = true;
+                    PartitionedSequenceKey<K> key = tuple2.f0();
+                    SourcedEvent<D,K> event = tuple2.f1(); // used only as return which goes to nop stage
+                    if (debugRemoval) {
+                        SourcedEvent<D,K> removed = pendingMap.remove(key);
+                        if (removed == null) {
+                            logger.warning("Failed to remove pending event with key " + key);
+                        }
+                    } else {
+                        pendingMap.delete(key);
+                    }
                     return event;
                 }).setName("Remove event from pending events")
                 .writeTo(Sinks.noop());

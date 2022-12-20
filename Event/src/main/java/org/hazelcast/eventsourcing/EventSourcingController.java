@@ -214,8 +214,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
      * @param <K>
      * @param <E>
      */
-    public static <D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> EventSourcingControllerBuilder<D,K,E> newBuilder(HazelcastInstance hz, String domainObjectName) {
-        return new EventSourcingControllerBuilder<D,K,E>(hz, domainObjectName);
+    public static <D extends DomainObject<K>, K extends Comparable<K>,
+                   E extends SourcedEvent<D,K>> EventSourcingControllerBuilder<D,K,E>
+        newBuilder(HazelcastInstance hz, String domainObjectName) {
+            return new EventSourcingControllerBuilder<D,K,E>(hz, domainObjectName);
     }
 
     private EventSourcingController(HazelcastInstance hazelcast) {
