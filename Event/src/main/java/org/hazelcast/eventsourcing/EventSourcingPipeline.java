@@ -32,6 +32,7 @@ import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 
 import java.util.concurrent.Callable;
 import java.util.logging.Logger;
@@ -92,6 +93,11 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         ServiceFactory<?, IMap<PartitionedSequenceKey<K>, SourcedEvent<D,K>>> pendingMapServiceFactory =
                 ServiceFactories.iMapService(controller.getPendingEventsMapName());
 
+        // Completions map, used in Sink
+        String completionsMapName = controller.getCompletionMapName();
+        IMap<PartitionedSequenceKey, CompletionInfo> completionsMap =
+                controller.getHazelcast().getMap(completionsMapName);
+
         Pipeline p = Pipeline.create();
         p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
                 .withoutTimestamps()
@@ -144,9 +150,20 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     } else {
                         pendingMap.delete(key);
                     }
-                    return event;
+                    return tuple2;
                 }).setName("Remove event from pending events")
-                .writeTo(Sinks.noop());
+                .writeTo(Sinks.mapWithUpdating(completionsMap,
+                        tuple -> tuple.f0(),
+                        (completionInfo, tuple) -> {
+                            System.out.println("Updating " + completionsMapName + " in sink");
+                            if (completionInfo == null) {
+                                logger.warning("No completion info to update for key " + tuple.f0());
+                                return null;
+                            } else {
+                                completionInfo.markComplete();
+                                return completionInfo;
+                            }
+                        })).setName("Update completion info");
 
         return p;
     }

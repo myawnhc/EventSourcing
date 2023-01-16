@@ -20,6 +20,7 @@ package org.hazelcast.eventsourcing.event;
 import com.hazelcast.core.HazelcastJsonValue;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 
+import java.io.Serializable;
 import java.util.function.UnaryOperator;
 
 /** SourcedEvent represents an event that affects a DomainObject.
@@ -41,7 +42,7 @@ import java.util.function.UnaryOperator;
  * @param <D> the DamainObject class to which this event can be applied
  * @param <K> the key class of the DomainObject (typically but not necessarily a String)
  */
-public abstract class SourcedEvent<D extends DomainObject<K>, K> implements UnaryOperator<D> {
+public abstract class SourcedEvent<D extends DomainObject<K>, K> implements UnaryOperator<D>, Serializable {
 
     protected K key;
     public K getKey() { return key; }

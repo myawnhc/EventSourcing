@@ -26,6 +26,7 @@ import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
@@ -83,6 +84,12 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     // Pending Queue / Map config
     private String pendingEventsMapName;
     private IMap<PartitionedSequenceKey<K>, SourcedEvent<D,K>> pendingEventsMap;
+    public String getPendingEventsMapName() { return pendingEventsMapName; }
+
+    // Completions map
+    private String completionMapName;
+    private IMap<PartitionedSequenceKey<K>, CompletionInfo> completionsMap;
+    public String getCompletionMapName() { return completionMapName; }
 
     // Pipeline
     private Job pipelineJob;
@@ -113,6 +120,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             this.controller.eventStoreName = domainObjectName + "_ES";
             this.controller.pendingEventsMapName = domainObjectName + "_PENDING";
             this.controller.viewMapName = domainObjectName + "_VIEW";
+            this.controller.completionMapName = domainObjectName + "_COMPLETIONS";
         }
 
         ///////////////////////
@@ -179,6 +187,17 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         }
 
         ///////////////////////
+        // Completions
+        ///////////////////////
+        public EventSourcingControllerBuilder<D,K,E> completionsMapName(String name) {
+            controller.completionMapName = name;
+            return this;
+        }
+        private void buildCompletionsMap() {
+            controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
+        }
+
+        ///////////////////////
         // Pipeline
         ///////////////////////
         private void startPipelineJob() {
@@ -192,10 +211,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             buildSequenceGenerator();
             logger.info("Building EventStore");
             buildEventStore();
-            logger.info("Building Materialized View/DAO");
+            logger.info("Building maps");
             buildViewMap();
-            logger.info("Building pending events map");
             buildPendingMap();
+            buildCompletionsMap();
             logger.info("Starting pipeline");
             startPipelineJob();
             return controller;
@@ -224,7 +243,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         this.hazelcast = hazelcast;
     }
 
-    public String getPendingEventsMapName() { return pendingEventsMapName; }
+
     public HazelcastInstance getHazelcast() { return hazelcast; }
 
     /** Handle the event.  The event will be inserted into the Pending Events map for the
@@ -240,11 +259,13 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
      * </bl>
      * @param event
      */
-    public void handleEvent(SourcedEvent<D,K> event) {
+    public PartitionedSequenceKey<K> handleEvent(SourcedEvent<D,K> event) {
         long sequence = getNextSequence();
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
         //logger.info("handleEvent: PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
         pendingEventsMap.put(psk, event);
+        completionsMap.put(psk, new CompletionInfo());
+        return psk;
     }
 
     /* Unclear if this will stick around ... originally added to try to resolve issue in
