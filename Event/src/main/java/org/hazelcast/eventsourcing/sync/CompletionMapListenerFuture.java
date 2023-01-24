@@ -17,11 +17,19 @@
 
 package org.hazelcast.eventsourcing.sync;
 
-import org.hazelcast.eventsourcing.event.DomainObject;
-import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
-import org.hazelcast.eventsourcing.event.SourcedEvent;
+import com.hazelcast.core.EntryEvent;
+import com.hazelcast.map.listener.EntryUpdatedListener;
 
-/** Callback used when event handler invoked from non-pipeline code */
-public interface EventCompletionHandler<D extends DomainObject<K>, K, E extends SourcedEvent<D,K> > {
-    void eventProcessingComplete(PartitionedSequenceKey<D> key, E event, CompletionInfo status);
+import java.io.Serializable;
+import java.util.concurrent.CompletableFuture;
+
+/** Adapts an EntryUpdatedListener&lt;T&gt; to a CompletableFuture&lt;T&gt; */
+public class CompletionMapListenerFuture<K,V> extends CompletableFuture<V>
+                                           implements EntryUpdatedListener<K,V>,
+                                                      Serializable {
+
+    @Override
+    public void entryUpdated(EntryEvent<K, V> entryEvent) {
+        super.complete(entryEvent.getValue());
+    }
 }
