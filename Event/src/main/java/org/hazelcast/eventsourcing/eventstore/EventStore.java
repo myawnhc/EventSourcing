@@ -76,6 +76,10 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         this.hazelcast = hazelcast;
         this.eventMapName = mapName;
         this.eventMap = hazelcast.getMap(mapName);
+        // Moved here so CREATE MAPPING is always done, even if we don't call any methods
+        // that require it -- makes it easier to check things via command line client or
+        // management center if we always have the mapping set up.
+        initSqlService();
     }
 
     /** Append an event to the event store
@@ -166,7 +170,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     }
 
     private List<SourcedEvent<D,K>> getEventsFor(K keyValue, int count, long upToTimestamp) {
-        initSqlService();
+        //initSqlService();
 
         // Substitution of the table name via setParameters not supported as query validator
         // needs to the real table name to verify column names, etc.
@@ -210,7 +214,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     }
 
     private long getEventCountFor(K keyValue) {
-        initSqlService();
+        //initSqlService();
         String countQuery = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
                 "key" + "\" AS VARCHAR) = '" + keyValue + "'";
         SqlStatement statement = new SqlStatement(countQuery);
@@ -228,7 +232,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     // We have to iterate through to find the highest sequence number to be deleted
     // since sequence numbers are not per-domain object
     private void deleteOldestEvents(K keyValue, int count) {
-        initSqlService();
+        //initSqlService();
         String selectOldest = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
                 "key\" AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
         SqlStatement statement = new SqlStatement(selectOldest);

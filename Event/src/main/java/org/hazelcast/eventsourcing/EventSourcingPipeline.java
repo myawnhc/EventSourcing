@@ -19,6 +19,7 @@ package org.hazelcast.eventsourcing;
 
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.config.JobConfig;
+import com.hazelcast.jet.datamodel.Tuple2;
 import com.hazelcast.jet.pipeline.JournalInitialPosition;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.jet.pipeline.ServiceFactories;
@@ -153,14 +154,14 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     return tuple2;
                 }).setName("Remove event from pending events")
                 .writeTo(Sinks.mapWithUpdating(completionsMap,
-                        tuple -> tuple.f0(),
+                        Tuple2::f0,
                         (completionInfo, tuple) -> {
-                            System.out.println("Updating " + completionsMapName + " in sink");
                             if (completionInfo == null) {
                                 logger.warning("No completion info to update for key " + tuple.f0());
                                 return null;
                             } else {
                                 completionInfo.markComplete();
+                                //System.out.println("CI for " + tuple.f0() + " updated in ESP sink: " + completionInfo + " : " + completionInfo.status);
                                 return completionInfo;
                             }
                         })).setName("Update completion info");

@@ -17,12 +17,15 @@
 
 package org.hazelcast.eventsourcing.event;
 
+import com.hazelcast.config.Config;
+import com.hazelcast.config.XmlConfigBuilder;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
@@ -35,6 +38,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 public class OpenAccountTest {
 
@@ -45,7 +50,9 @@ public class OpenAccountTest {
     @BeforeAll
     static void init() {
         // Create Hazelcast structures
-        hazelcast = Hazelcast.newHazelcastInstance();
+        Config config = new XmlConfigBuilder().build();
+        config = EventSourcingController.addRequiredConfigItems(config);
+        hazelcast = Hazelcast.newHazelcastInstance(config);
         controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
                 .build();
 
@@ -56,8 +63,7 @@ public class OpenAccountTest {
 
     @AfterAll
     static void cleanUp() {
-        controller.shutdown(); // Cancels the EventSourcingPipeline job
-        hazelcast.shutdown();  // could move this into controller shutdown
+        hazelcast.shutdown();
     }
 
     @BeforeEach
@@ -67,13 +73,15 @@ public class OpenAccountTest {
     void tearDown() {}
 
     @Test
-    void verifyInitialBalance() {
+    void verifyInitialBalance() throws ExecutionException, InterruptedException {
         AccountConsumer consumer = new AccountConsumer();
         submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
 
         // OpenAccountEvent is a SourcedEvent
         OpenAccountEvent open = new OpenAccountEvent("12345", "Bob", BigDecimal.valueOf(777.22));
-        controller.handleEvent(open);
+        Future<CompletionInfo> completion = controller.handleEvent(open, null);
+        CompletionInfo info = completion.get();
+        Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, info.status);
 
         // Get a materialized view that reflects the event
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();

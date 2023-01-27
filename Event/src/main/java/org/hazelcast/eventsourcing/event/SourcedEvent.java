@@ -59,7 +59,6 @@ public abstract class SourcedEvent<D extends DomainObject<K>, K> implements Unar
     protected long timestamp;
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long value) { timestamp = value; }
-
     protected HazelcastJsonValue payload;
     public HazelcastJsonValue getPayload() { return payload; }
     public void setPayload(HazelcastJsonValue data) { payload = data; }

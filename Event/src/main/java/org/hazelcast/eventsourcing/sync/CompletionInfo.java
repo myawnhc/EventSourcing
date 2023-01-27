@@ -17,20 +17,29 @@
 
 package org.hazelcast.eventsourcing.sync;
 
-import java.io.Serializable;
+import org.hazelcast.eventsourcing.event.SourcedEvent;
 
-public class CompletionInfo implements Serializable {
+import java.util.UUID;
+
+public class CompletionInfo {
 
     public enum Status { INCOMPLETE, COMPLETED_OK, TIMED_OUT, HAD_ERROR }
 
     public Status status;
     public long startTime;
     public long completionTime = -1;
-    public Throwable error;
+    public Throwable error; // not compact serializable - may change to just message string
 
-    public CompletionInfo() {
+    // By carrying these fields passed in by the pipeline we can simplify the flow
+    private UUID uuid;
+    public SourcedEvent event;
+
+    // identifier may be null; used in pipeline callers but not unit tests or API-direct calls
+    public CompletionInfo(SourcedEvent event, UUID identifier) {
         status = Status.INCOMPLETE;
         startTime = System.currentTimeMillis();
+        this.uuid = identifier;
+        this.event = event;
     }
 
     public void markComplete() {
@@ -47,5 +56,13 @@ public class CompletionInfo implements Serializable {
     public void markOutOfTime() {
         status = Status.TIMED_OUT;
         completionTime = System.currentTimeMillis();
+    }
+
+    public UUID getUUID() {
+        return uuid;
+    }
+
+    public SourcedEvent getEvent() {
+        return event;
     }
 }

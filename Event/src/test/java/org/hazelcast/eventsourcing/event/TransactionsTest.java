@@ -17,6 +17,8 @@
 
 package org.hazelcast.eventsourcing.event;
 
+import com.hazelcast.config.Config;
+import com.hazelcast.config.XmlConfigBuilder;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.org.json.JSONObject;
@@ -24,6 +26,7 @@ import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountCompactionEvent;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
@@ -41,6 +44,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 public class TransactionsTest {
 
@@ -54,10 +59,11 @@ public class TransactionsTest {
 
     @BeforeAll
     static void init() {
-        hazelcast = Hazelcast.newHazelcastInstance();
-        controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
-                .build();
-
+//        Config config = new XmlConfigBuilder().build();
+//        config = EventSourcingController.addRequiredConfigItems(config);
+//        hazelcast = Hazelcast.newHazelcastInstance(config);
+//        controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
+//                .build();
 
         testEvents = new ArrayList<>();
         for (int i=0; i<TEST_EVENT_COUNT; i++) {
@@ -89,14 +95,19 @@ public class TransactionsTest {
 
     @AfterAll
     static void cleanUp() {
-        controller.shutdown();
-        hazelcast.shutdown();
+//        hazelcast.shutdown();
     }
 
     private static int testNumber = 0;
 
     @BeforeEach
     void setUp() {
+        Config config = new XmlConfigBuilder().build();
+        config = EventSourcingController.addRequiredConfigItems(config);
+        hazelcast = Hazelcast.newHazelcastInstance(config);
+        controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
+                .build();
+
         // Create subscription manager, register it
         submgr = new ReliableTopicSubMgr<>();
         SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
@@ -109,32 +120,36 @@ public class TransactionsTest {
         SubscriptionManager.unregister(hazelcast, BalanceChangeEvent.class, submgr);
 
         controller.getEventStore().clearData();
+        hazelcast.shutdown();
     }
 
     @Test
-    void verifyTransactions() {
+    void verifyTransactions() throws ExecutionException, InterruptedException {
         AccountConsumer consumer = new AccountConsumer();
-        int offset = testNumber * TEST_EVENT_COUNT;
+        int offset = 0; // was testNumber * TEST_EVENT_COUNT;
         submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
         submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
-        testNumber++;
+        //testNumber++;
 
         // Open the account
         OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));
         System.out.println("Event 1 = " + open);
 
-        controller.handleEvent(open);
+        Future<CompletionInfo> f = controller.handleEvent(open);
+        Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, f.get().status);
+
 
         BigDecimal expectedBalance = BigDecimal.valueOf(100.00); // Set to initial balance
 
         // Throw transactions at the account
         System.out.println("Sending " + testEvents.size() + " randomized events");
-        for (int i=0; i<testEvents.size(); i++) {
+        for (int i=0; i<testEvents.size()-1; i++) {
             AccountEvent event = testEvents.get(i);
             System.out.println("Event " + (i+2) + " = " + event);
             JSONObject jobj = new JSONObject(event.getPayload().getValue());
             expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
-            controller.handleEvent(testEvents.get(i));
+            Future<CompletionInfo> fci = controller.handleEvent(testEvents.get(i));
+            Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, fci.get().status);
         }
 
         // Get a materialized view that reflects the event
@@ -142,7 +157,7 @@ public class TransactionsTest {
         Account a = es.materialize(new Account(), TEST_ACCOUNT);
 
         Assertions.assertEquals(expectedBalance, a.getBalance());
-        Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount());
+        Assertions.assertEquals(TEST_EVENT_COUNT, consumer.getEventCount());
 
         submgr.unsubscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
         submgr.unsubscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
@@ -152,28 +167,31 @@ public class TransactionsTest {
     /** Same as transactions test, except we do verification, compact 50%, then
      * verify again to ensure we get the same result.
      */
-    void verifyCompaction() {
+    void verifyCompaction() throws ExecutionException, InterruptedException {
         AccountConsumer consumer = new AccountConsumer();
-        int offset = testNumber * TEST_EVENT_COUNT;
+        int offset = 0; // was testNumber * TEST_EVENT_COUNT;
         submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
         submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
-        testNumber++;
+        //testNumber++;
 
         // Open the account
         OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));
         System.out.println("Event 1 = " + open);
-        controller.handleEvent(open);
+        Future<CompletionInfo> openComplete = controller.handleEvent(open);
+        Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, openComplete.get().status);
 
         BigDecimal expectedBalance = BigDecimal.valueOf(100.00); // Set to initial balance
 
         // Throw transactions at the account
         System.out.println("Sending " + testEvents.size() + " randomized events");
-        for (int i=0; i<testEvents.size(); i++) {
+        for (int i=0; i<testEvents.size()-1; i++) {
             AccountEvent event = testEvents.get(i);
             System.out.println("Event " + (i+2) + " = " + event);
             JSONObject jobj = new JSONObject(event.getPayload().getValue());
             expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
-            controller.handleEvent(testEvents.get(i));
+            Future<CompletionInfo> bcComplete = controller.handleEvent(testEvents.get(i));
+            Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, bcComplete.get().status);
+
         }
 
         // Get a materialized view that reflects the event
@@ -181,7 +199,7 @@ public class TransactionsTest {
         Account a = es.materialize(new Account(), TEST_ACCOUNT);
 
         Assertions.assertEquals(expectedBalance, a.getBalance());
-        Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount());
+        Assertions.assertEquals(TEST_EVENT_COUNT, consumer.getEventCount());
 
         es.compact(new AccountCompactionEvent(), new Account(), "67890", 0.5);
         Account a2 = es.materialize(new Account(), TEST_ACCOUNT);

@@ -17,7 +17,10 @@
 
 package org.hazelcast.eventsourcing;
 
+import com.hazelcast.config.CompactSerializationConfig;
+import com.hazelcast.config.Config;
 import com.hazelcast.config.MapConfig;
+import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.jet.Job;
@@ -27,11 +30,14 @@ import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
+import org.hazelcast.eventsourcing.sync.CompletionInfoCompactSerializer;
+import org.hazelcast.eventsourcing.sync.CompletionTracker;
 import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.CancellationException;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
@@ -50,6 +56,9 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     /** Return the name of the domain object passed in to the Builder */
     public String getDomainObjectName() { return domainObjectName; } // used to name pipeline job
     private static Logger logger = null; // assigned in static initializer
+    // Used by service pipelines to receive completion notifications from ESPipeline
+    private CompletionTracker completionTracker = new CompletionTracker();
+    public CompletionTracker getCompletionTracker() { return completionTracker; }
 
     // Sequence Generator
     private String sequenceGeneratorName;
@@ -106,6 +115,16 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         }
     }
 
+    // Helper method to add any additions we require to the Config object before the service
+    // starts up the cluster
+    public static Config addRequiredConfigItems(Config in) {
+        SerializationConfig sc = in.getSerializationConfig();
+        CompactSerializationConfig csc = sc.getCompactSerializationConfig().addSerializer(new CompletionInfoCompactSerializer());
+        sc.setCompactSerializationConfig(csc);
+        in.setSerializationConfig(sc);
+        return in;
+    }
+
     /////////////
     // Builder
     /////////////
@@ -143,10 +162,6 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             controller.eventStoreName = name;
             return this;
         }
-//        public EventSourcingControllerBuilder keyName(String name) {
-//            controller.keyName = name;
-//            return this;
-//        }
 
         // TODO: compaction policy
         // TODO: spill-to-disk enablement (maybe related to compaction policy)
@@ -195,6 +210,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         }
         private void buildCompletionsMap() {
             controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
+            controller.completionsMap.addEntryListener(controller.getCompletionTracker(), true);
         }
 
         ///////////////////////
@@ -246,48 +262,44 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     public HazelcastInstance getHazelcast() { return hazelcast; }
 
-    /** Handle the event.  The event will be inserted into the Pending Events map for the
-     * domain object, which will in turn trigger the pipeline job that handles the
-     * event.  See the EventSourcingPipeline for details, but basic steps in handling the
-     * event include
-     * <bl>
-     *     <li>Assign a unique sequence number to the event and timestamp it</li>
-     *     <li>Append the event to the event store</li>
-     *     <li>Update the domain object's materialized view with the event </li>
-     *     <li>Notify any observers/subscribers to the event that the event occurred</li>
-     *     <li>Remove the event from the pending events map</li>
-     * </bl>
-     * @param event
-     */
-    public PartitionedSequenceKey<K> handleEvent(SourcedEvent<D,K> event) {
-        long sequence = getNextSequence();
-        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
-        //logger.info("handleEvent: PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
-        pendingEventsMap.put(psk, event);
-        completionsMap.put(psk, new CompletionInfo());
-        return psk;
+//    /** Handle the event.  The event will be inserted into the Pending Events map for the
+//     * domain object, which will in turn trigger the pipeline job that handles the
+//     * event.  See the EventSourcingPipeline for details, but basic steps in handling the
+//     * event include
+//     * <bl>
+//     *     <li>Assign a unique sequence number to the event and timestamp it</li>
+//     *     <li>Append the event to the event store</li>
+//     *     <li>Update the domain object's materialized view with the event </li>
+//     *     <li>Notify any observers/subscribers to the event that the event occurred</li>
+//     *     <li>Remove the event from the pending events map</li>
+//     * </bl>
+//     * @param event
+//     */
+//    @Deprecated
+//    public PartitionedSequenceKey<K> handleEvent(SourcedEvent<D,K> event) {
+//        long sequence = getNextSequence();
+//        PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
+//        logger.info("DEPRECATED handleEvent: PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
+//        pendingEventsMap.put(psk, event);
+//        completionsMap.put(psk, new CompletionInfo());
+//        return psk;
+//    }
+    public CompletableFuture<CompletionInfo> handleEvent(SourcedEvent<D,K> event) {
+        return handleEvent(event, null);
     }
 
-    /* Unclear if this will stick around ... originally added to try to resolve issue in
-     * unit tests where shutting down cluster, followed by quick start of new cluster with
-     * same config, would throw some weird errors ... so trying to shut down more cleanly
-     * in hopes that the newly-started cluster won't complain.
-     *
-     * So far, this isn't helping at all.
-     *
-     * example error:
-     * [2022-10-19 12:02:31] [WARNING] [192.168.86.35]:5701 [eventsourcing] [5.2-SNAPSHOT]
-     * com.hazelcast.spi.exception.RetryableHazelcastException: Cannot submit job with
-     * name 'EventSourcing Pipeline for account' before the master node initializes job
-     * coordination service's state
-     */
-    public void shutdown() {
+
+    public CompletableFuture<CompletionInfo> handleEvent(SourcedEvent<D,K> event, UUID identifier) {
         try {
-            pipelineJob.cancel();
-            //pipelineJob.join();
-        } catch (CancellationException ce) {
-            // ignore
-            //ce.printStackTrace();
+            long sequence = getNextSequence();
+            PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
+            CompletableFuture<CompletionInfo> future = completionTracker.register(psk);
+            completionsMap.put(psk, new CompletionInfo(event, identifier));
+            pendingEventsMap.put(psk, event); // Triggers the EventSourcingPipeline
+            return future;
+        } catch (Throwable t) {
+            t.printStackTrace();
+            return null;
         }
     }
 }
