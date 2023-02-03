@@ -17,9 +17,9 @@
 
 package org.hazelcast.eventsourcing;
 
+import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.config.CompactSerializationConfig;
 import com.hazelcast.config.Config;
-import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
@@ -32,13 +32,13 @@ import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.sync.CompletionInfoCompactSerializer;
 import org.hazelcast.eventsourcing.sync.CompletionTracker;
-import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -59,6 +59,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     // Used by service pipelines to receive completion notifications from ESPipeline
     private CompletionTracker completionTracker = new CompletionTracker();
     public CompletionTracker getCompletionTracker() { return completionTracker; }
+
+    // Jars that need to be attached to JobConfig of the EventSourcingPipelines
+    private List<URL> dependendencies;
+    public List<URL> getDependentJars() { return dependendencies; }
 
     // Sequence Generator
     private String sequenceGeneratorName;
@@ -103,6 +107,25 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     // Pipeline
     private Job pipelineJob;
 
+    private String pending_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
+            "TYPE IMap\n" +
+            "OPTIONS (\n" +
+            "  'keyFormat' = 'java',\n" +
+            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
+            "  'valueFormat' = 'java',\n" +
+            "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
+            ")";
+
+    private String completions_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
+            "TYPE IMap\n" +
+            "OPTIONS (\n" +
+            "  'keyFormat' = 'java',\n" +
+            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
+            "  'valueFormat' = 'java',\n" +
+            "  'valueJavaClass' = 'org.hazelcast.eventsourcing.sync.CompletionInfo'\n" +
+            ")";
+
+
     static {
         InputStream stream = EventSourcingController.class.getClassLoader().
                 getResourceAsStream("logging.properties");
@@ -118,6 +141,14 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     // Helper method to add any additions we require to the Config object before the service
     // starts up the cluster
     public static Config addRequiredConfigItems(Config in) {
+        SerializationConfig sc = in.getSerializationConfig();
+        CompactSerializationConfig csc = sc.getCompactSerializationConfig().addSerializer(new CompletionInfoCompactSerializer());
+        sc.setCompactSerializationConfig(csc);
+        in.setSerializationConfig(sc);
+        return in;
+    }
+
+    public static ClientConfig addRequiredConfigItems(ClientConfig in) {
         SerializationConfig sc = in.getSerializationConfig();
         CompactSerializationConfig csc = sc.getCompactSerializationConfig().addSerializer(new CompletionInfoCompactSerializer());
         sc.setCompactSerializationConfig(csc);
@@ -192,13 +223,16 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             // For Viridian Serverless, we need to programmatically enable the map journal
             // as it cannot be toggled on via the UI.  If map config is already set we will not
             // override it.  (This will likely be unnecessary in a future release)
-            MapConfig pendingMapConfig = controller.getHazelcast().getConfig().getMapConfig("*_PENDING");
-            if (pendingMapConfig == null) {
-                EnableMapJournal enabler = new EnableMapJournal("*_PENDING");
-                ExecutorService executor = controller.getHazelcast().getExecutorService("Executor");
-                executor.submit(enabler);
-            }
+//            MapConfig pendingMapConfig = controller.getHazelcast().getConfig().getMapConfig("*_PENDING");
+//            if (pendingMapConfig == null) {
+//                EnableMapJournal enabler = new EnableMapJournal("*_PENDING");
+//                ExecutorService executor = controller.getHazelcast().getExecutorService("Executor");
+//                executor.submit(enabler);
+//            }
             controller.pendingEventsMap = controller.hazelcast.getMap(controller.pendingEventsMapName);
+            // We don't use this SQL mapping internally but define it to make it friendlier to developers
+            controller.pending_mapping_template = controller.pending_mapping_template.replaceAll("\\?", controller.pendingEventsMapName);
+            controller.getHazelcast().getSql().execute(controller.pending_mapping_template);
         }
 
         ///////////////////////
@@ -211,6 +245,9 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         private void buildCompletionsMap() {
             controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
             controller.completionsMap.addEntryListener(controller.getCompletionTracker(), true);
+            // We don't use this SQL mapping internally but define it to make it friendlier to developers
+            controller.completions_mapping_template = controller.completions_mapping_template.replaceAll("\\?", controller.completionMapName);
+            controller.getHazelcast().getSql().execute(controller.completions_mapping_template);
         }
 
         ///////////////////////
@@ -220,6 +257,13 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             EventSourcingPipeline<D,K,E> esp = new EventSourcingPipeline<>(controller);
             controller.pipelineJob = esp.call();
         }
+
+        // Dependencies of pipeline
+        public EventSourcingControllerBuilder<D,K,E> addDependencies(List<URL> dependentJars) {
+            controller.dependendencies = dependentJars;
+            return this;
+        }
+
 
 
         public EventSourcingController<D,K,E> build() {

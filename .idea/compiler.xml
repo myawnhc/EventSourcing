@@ -9,5 +9,9 @@
         <module name="Event" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="Event" target="11" />
+      <module name="EventSourcing" target="11" />
+    </bytecodeTargetLevel>
   </component>
 </project>

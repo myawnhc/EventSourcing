@@ -63,7 +63,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     transient protected IMap<PartitionedSequenceKey<K>, E> eventMap;
     transient protected SqlService sqlService;
 
-    private String mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
+    private String eventstore_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
             "TYPE IMap\n" +
             "OPTIONS (\n" +
             "  'keyFormat' = 'java',\n" +
@@ -71,6 +71,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
             "  'valueFormat' = 'java',\n" +
             "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
             ")";
+
 
     public EventStore(String mapName, HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
@@ -208,8 +209,8 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
             sqlService = hazelcast.getSql();
             // CREATE MAPPING doesn't support dynamic parameters, so we do the
             // substitution here.
-            mapping_template = mapping_template.replaceAll("\\?", eventMapName);
-            sqlService.execute(mapping_template);
+            eventstore_mapping_template = eventstore_mapping_template.replaceAll("\\?", eventMapName);
+            sqlService.execute(eventstore_mapping_template);
         }
     }
 

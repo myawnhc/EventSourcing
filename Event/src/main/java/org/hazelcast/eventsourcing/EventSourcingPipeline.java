@@ -28,6 +28,7 @@ import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
@@ -35,6 +36,8 @@ import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 
+import java.lang.reflect.Constructor;
+import java.net.URL;
 import java.util.concurrent.Callable;
 import java.util.logging.Logger;
 
@@ -52,7 +55,6 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
     private final String pendingEventsMapName;
     private static final Logger logger = Logger.getLogger(EventSourcingPipeline.class.getName());
 
-
     public EventSourcingPipeline(EventSourcingController<D,K,E> controller) {
         this.controller = controller;
         this.pendingEventsMapName = controller.getPendingEventsMapName();
@@ -64,18 +66,48 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
      */
     @Override
     public Job call() {
-        Pipeline p = createPipeline();
-        JobConfig jobConfig = new JobConfig();
-        // future: add jars as needed for client-server deployment
-        jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
-        while (true) {
-            try {
-                return controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
-            } catch (RetryableHazelcastException rte) {
-                // Seen: com.hazelcast.spi.exception.RetryableHazelcastException:
-                // Cannot submit job with name '<jobname>' before the master node initializes job coordination service's state
-                logger.warning("Retrying job submission due to retryable exception");
+        try {
+            Pipeline p = createPipeline();
+            JobConfig jobConfig = new JobConfig();
+            // Because we're run from a service, our jar location cannot be determined relative
+            // to where the app was launched.  The classloader knows where we were loaded from
+            // so we can get our enclosing jar from the associated resource RUL.
+//            URL curl = EventSourcingPipeline.class.getResource("EventSourcingPipeline.class");
+//            String filePart = curl.getFile();
+//            System.out.println("-----> Parsing " + curl);
+//            int sepIndex = filePart.indexOf('!');
+//            URL eventSourcing = null;
+//            if (sepIndex == -1) {
+//                System.out.println("Class outside of jar, using URL as-is");
+//                eventSourcing = curl;
+//            } else {
+//                String jarPart = filePart.substring(0, sepIndex);
+//                System.out.println("File inside jar, using URL " + jarPart);
+//                eventSourcing = URI.create(jarPart).toURL();
+//            }
+            jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
+            //System.out.println("- EventSourcingPipeline JobConfig includes " + eventSourcing);
+            for (URL url : controller.getDependentJars())
+                jobConfig.addJar(url);
+
+//            List<CompactSerializer> serializers = new ArrayList<>();
+//            for (CompactSerializer<? extends SourcedEvent> cs : serializers) {
+//                // Expects StreamSerializer, we have CompactSerializer ...
+//                jobConfig.registerSerializer(cs.getCompactClass(), cs.getClass());
+//            }
+
+            while (true) {
+                try {
+                    return controller.getHazelcast().getJet().newJobIfAbsent(p, jobConfig);
+                } catch (RetryableHazelcastException rte) {
+                    // Seen: com.hazelcast.spi.exception.RetryableHazelcastException:
+                    // Cannot submit job with name '<jobname>' before the master node initializes job coordination service's state
+                    logger.warning("Retrying job submission due to retryable exception");
+                }
             }
+        } catch (Throwable m) {
+            m.printStackTrace();
+            return null;
         }
     }
 
@@ -108,8 +140,24 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 // can lead to failures
                 .map(pendingEvent -> {
                     PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
-                    //logger.info("Pipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
-                    SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    logger.info("EventSourcingPipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
+                    SourcedEvent<D,K> event;
+                    // Can't do instanceof test here -- getValue triggers deserialization which
+                    // will fail if SourcedEvent subclass CompactSerializer isn't registered
+                    if (pendingEvent.getValue() instanceof SourcedEvent)
+                        event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    else {
+                        // Experimental - only implemented for OpenAccountEvent at this time
+                        System.out.println("Reconstructing event from generic record " + pendingEvent.getValue());
+                        GenericRecord r = (GenericRecord) pendingEvent.getValue();
+                        String eventClass = r.getString("eventClass");
+                        // Requests OpenAccountEvent on classpath - if we had that, we wouldn't be in this
+                        // fork to begin with!
+                        Class<? extends SourcedEvent<D,K>> k = (Class<? extends SourcedEvent<D, K>>) Class.forName(eventClass);
+                        // key, timestamp, payload, eventClass are member fields
+                        Constructor<? extends SourcedEvent<D, K>> c = k.getConstructor(GenericRecord.class);
+                        event = c.newInstance(r);
+                    }
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
                 }).setLocalParallelism(1).setName("Update SourcedEvent with timestamp")
@@ -161,7 +209,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                                 return null;
                             } else {
                                 completionInfo.markComplete();
-                                //System.out.println("CI for " + tuple.f0() + " updated in ESP sink: " + completionInfo + " : " + completionInfo.status);
+                                System.out.println("CI for " + tuple.f0() + " updated in ESP sink: " + completionInfo + " : " + completionInfo.status);
                                 return completionInfo;
                             }
                         })).setName("Update completion info");
