@@ -140,7 +140,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 // can lead to failures
                 .map(pendingEvent -> {
                     PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
-                    logger.info("EventSourcingPipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
+                    //logger.info("EventSourcingPipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
                     SourcedEvent<D,K> event;
                     // Can't do instanceof test here -- getValue triggers deserialization which
                     // will fail if SourcedEvent subclass CompactSerializer isn't registered
@@ -209,7 +209,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                                 return null;
                             } else {
                                 completionInfo.markComplete();
-                                System.out.println("CI for " + tuple.f0() + " updated in ESP sink: " + completionInfo + " : " + completionInfo.status);
+                                //System.out.println("CI for " + tuple.f0() + " updated in ESP sink: " + completionInfo + " : " + completionInfo.status);
                                 return completionInfo;
                             }
                         })).setName("Update completion info");

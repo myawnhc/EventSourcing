@@ -328,7 +328,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 //        completionsMap.put(psk, new CompletionInfo());
 //        return psk;
 //    }
+    @Deprecated
+    /** @Deprecated use the variant that takes a UUID as second argument */
     public CompletableFuture<CompletionInfo> handleEvent(SourcedEvent<D,K> event) {
+        System.err.println("WARNING: single-arg version of handleEvent is deprecated - shuld pass UUID as arg1");
         return handleEvent(event, null);
     }
 
