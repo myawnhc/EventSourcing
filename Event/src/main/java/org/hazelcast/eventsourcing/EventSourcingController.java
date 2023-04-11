@@ -36,6 +36,7 @@ import org.hazelcast.eventsourcing.sync.CompletionTracker;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -61,7 +62,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     public CompletionTracker getCompletionTracker() { return completionTracker; }
 
     // Jars that need to be attached to JobConfig of the EventSourcingPipelines
-    private List<URL> dependendencies;
+    private List<URL> dependendencies = Collections.EMPTY_LIST;
     public List<URL> getDependentJars() { return dependendencies; }
 
     // Sequence Generator

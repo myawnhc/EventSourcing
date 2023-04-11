@@ -18,7 +18,10 @@
 package org.hazelcast.eventsourcing.pubsub;
 
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.jet.pipeline.Sink;
+import com.hazelcast.jet.pipeline.StreamSource;
 import com.hazelcast.map.IMap;
+import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
@@ -26,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -43,7 +47,7 @@ import java.util.logging.Logger;
  *
  * @param <E> Event class for which subscriptions are managed
  */
-public abstract class SubscriptionManager<E> implements Serializable {
+public abstract class SubscriptionManager<E extends SourcedEvent> implements Serializable {
 
     // Optionally pass these to subscribe() method (UNIMPLEMENTED)
     public enum STARTING { FROM_NEXT, FROM_BEGINNING, FROM_OFFSET } // FROM_TIMESTAMP also?
@@ -151,12 +155,19 @@ public abstract class SubscriptionManager<E> implements Serializable {
         Class<? extends SourcedEvent> eventClass = event.getClass();
         List<SubscriptionManager> mgrs = getSubscriptionManagers(eventClass);
         if (mgrs == null) {
-            System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it:");
-        }
-        for (SubscriptionManager manager : mgrs) {
-            manager.publish(eventClass.getCanonicalName(), event);
+            System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it");
+        } else {
+            // Because we have different subscription managers per service, seems unnecessary to
+            // use full canonical name for events, should be no collisions.
+            for (SubscriptionManager manager : mgrs) {
+                manager.publish(eventClass.getSimpleName(), event);
+            }
         }
     }
+
+    // Optionally allow use as a Jet endpoint
+    public StreamSource<Map.Entry<PartitionedSequenceKey, E>> getStreamSource(String eventName) { return null; }
+    public Sink<E> getSink() { return null; }
 
     // Implementing subclasses will likely store their event-to-consumer maps in Hazelcast
     protected HazelcastInstance getHazelcastInstance() {

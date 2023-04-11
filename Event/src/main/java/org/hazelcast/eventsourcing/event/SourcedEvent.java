@@ -44,6 +44,12 @@ import java.util.function.UnaryOperator;
  */
 public abstract class SourcedEvent<D extends DomainObject<K>, K> implements UnaryOperator<D>, Serializable {
 
+    // Constants used in serializers
+    public static final String KEY = "key";
+    public static final String EVENT_CLASS = "eventClass";
+    public static final String TIMESTAMP = "timestamp";
+    public static final String PAYLOAD = "payload";
+
     protected K key;
     public K getKey() { return key; }
 

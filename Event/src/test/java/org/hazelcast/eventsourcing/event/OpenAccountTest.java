@@ -24,6 +24,7 @@ import com.hazelcast.core.HazelcastInstance;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
+import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
@@ -46,6 +47,7 @@ public class OpenAccountTest {
     static EventSourcingController<Account, String, AccountEvent> controller;
     static SubscriptionManager<AccountEvent> submgr;
     static HazelcastInstance hazelcast;
+    static boolean USE_IMAP_SUB_MGR = true;
 
     @BeforeAll
     static void init() {
@@ -57,7 +59,10 @@ public class OpenAccountTest {
                 .build();
 
         // Create subscription manager, register it
-        submgr = new ReliableTopicSubMgr<>();
+        if (USE_IMAP_SUB_MGR)
+            submgr = new IMapSubMgr<>();
+        else
+            submgr = new ReliableTopicSubMgr<>();
         SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
     }
 

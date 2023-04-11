@@ -21,6 +21,7 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.topic.ITopic;
 import com.hazelcast.topic.Message;
 import com.hazelcast.topic.ReliableMessageListener;
+import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.pubsub.Consumer;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 
@@ -32,8 +33,11 @@ import java.util.logging.Logger;
 /** Implementation of the SubscriptionManager using Hazelcast Reliable Topic as the
  * messaging backbone
  * @param <E> base class of events to be passed as messages
+ *
+ * Limitation: Does not support use in Jet pipelines as either source or sink.
+ *           (Sink support is very straightforward but not implemented).
  */
-public class ReliableTopicSubMgr<E> extends SubscriptionManager<E> {
+public class ReliableTopicSubMgr<E extends SourcedEvent> extends SubscriptionManager<E> {
 
     // Is this safely kept locally, or does it need to be an IMap?
     Map<SMKey<E>, UUID> subscriberMap = new HashMap<>();

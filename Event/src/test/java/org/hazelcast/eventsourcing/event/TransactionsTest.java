@@ -25,6 +25,7 @@ import com.hazelcast.org.json.JSONObject;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
+import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
@@ -52,6 +53,8 @@ public class TransactionsTest {
     static EventSourcingController<Account, String, AccountEvent> controller;
     static SubscriptionManager<AccountEvent> submgr;
     static HazelcastInstance hazelcast;
+    static boolean USE_IMAP_SUB_MGR = true;
+
 
     public static final int TEST_EVENT_COUNT = 10_000;
     public static final String TEST_ACCOUNT = "67890";
@@ -109,7 +112,10 @@ public class TransactionsTest {
                 .build();
 
         // Create subscription manager, register it
-        submgr = new ReliableTopicSubMgr<>();
+        if (USE_IMAP_SUB_MGR)
+            submgr = new IMapSubMgr<>();
+        else
+            submgr = new ReliableTopicSubMgr<>();
         SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
         SubscriptionManager.register(hazelcast, BalanceChangeEvent.class, submgr);
     }
@@ -148,7 +154,7 @@ public class TransactionsTest {
             System.out.println("Event " + (i+2) + " = " + event);
             JSONObject jobj = new JSONObject(event.getPayload().getValue());
             expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
-            Future<CompletionInfo> fci = controller.handleEvent(testEvents.get(i));
+            Future<CompletionInfo> fci = controller.handleEvent(testEvents.get(i), null);
             Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, fci.get().status);
         }
 
@@ -177,7 +183,7 @@ public class TransactionsTest {
         // Open the account
         OpenAccountEvent open = new OpenAccountEvent(TEST_ACCOUNT, "Test Account", BigDecimal.valueOf(100.00));
         System.out.println("Event 1 = " + open);
-        Future<CompletionInfo> openComplete = controller.handleEvent(open);
+        Future<CompletionInfo> openComplete = controller.handleEvent(open, null);
         Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, openComplete.get().status);
 
         BigDecimal expectedBalance = BigDecimal.valueOf(100.00); // Set to initial balance
@@ -189,7 +195,7 @@ public class TransactionsTest {
             System.out.println("Event " + (i+2) + " = " + event);
             JSONObject jobj = new JSONObject(event.getPayload().getValue());
             expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
-            Future<CompletionInfo> bcComplete = controller.handleEvent(testEvents.get(i));
+            Future<CompletionInfo> bcComplete = controller.handleEvent(testEvents.get(i), null);
             Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, bcComplete.get().status);
 
         }

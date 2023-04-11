@@ -69,24 +69,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         try {
             Pipeline p = createPipeline();
             JobConfig jobConfig = new JobConfig();
-            // Because we're run from a service, our jar location cannot be determined relative
-            // to where the app was launched.  The classloader knows where we were loaded from
-            // so we can get our enclosing jar from the associated resource RUL.
-//            URL curl = EventSourcingPipeline.class.getResource("EventSourcingPipeline.class");
-//            String filePart = curl.getFile();
-//            System.out.println("-----> Parsing " + curl);
-//            int sepIndex = filePart.indexOf('!');
-//            URL eventSourcing = null;
-//            if (sepIndex == -1) {
-//                System.out.println("Class outside of jar, using URL as-is");
-//                eventSourcing = curl;
-//            } else {
-//                String jarPart = filePart.substring(0, sepIndex);
-//                System.out.println("File inside jar, using URL " + jarPart);
-//                eventSourcing = URI.create(jarPart).toURL();
-//            }
             jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
-            //System.out.println("- EventSourcingPipeline JobConfig includes " + eventSourcing);
             for (URL url : controller.getDependentJars())
                 jobConfig.addJar(url);
 
