@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Hazelcast, Inc
+ * Copyright 2022-2023 Hazelcast, Inc
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.XmlConfigBuilder;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.org.json.JSONObject;
+import com.hazelcast.shaded.org.json.JSONObject;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
@@ -113,7 +113,7 @@ public class TransactionsTest {
 
         // Create subscription manager, register it
         if (USE_IMAP_SUB_MGR)
-            submgr = new IMapSubMgr<>();
+            submgr = new IMapSubMgr<>("AccountEvent");
         else
             submgr = new ReliableTopicSubMgr<>();
         SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);

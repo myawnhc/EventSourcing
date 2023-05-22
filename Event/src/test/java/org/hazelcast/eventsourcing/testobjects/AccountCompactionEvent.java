@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Hazelcast, Inc
+ * Copyright 2022-2023 Hazelcast, Inc
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 package org.hazelcast.eventsourcing.testobjects;
 
 import com.hazelcast.core.HazelcastJsonValue;
-import com.hazelcast.org.json.JSONObject;
+import com.hazelcast.shaded.org.json.JSONObject;
 import com.hazelcast.sql.SqlRow;
 import org.hazelcast.eventsourcing.eventstore.EventStoreCompactionEvent;
 
