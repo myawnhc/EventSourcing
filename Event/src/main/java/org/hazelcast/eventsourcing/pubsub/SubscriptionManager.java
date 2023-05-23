@@ -80,7 +80,7 @@ public abstract class SubscriptionManager<E extends SourcedEvent> implements Ser
         if (managersForEvent == null)
                 managersForEvent = new ArrayList<>();
         managersForEvent.add(impl);
-        event2submgr.put(eventClass, managersForEvent);
+        event2submgr.put(eventClass, managersForEvent); // TODO: Serialization fails - SM not serializable
         logger.info("Registered " + impl.getClass().getCanonicalName() + " for " + eventClass.getCanonicalName());
     }
 

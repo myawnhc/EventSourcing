@@ -32,17 +32,13 @@ import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> {
     // Is this safely kept locally, or does it need to be an IMap?
     Map<IMapSubMgr.SMKey<E>, UUID> subscriberMap = new HashMap<>();
     private static final Logger logger = Logger.getLogger(IMapSubMgr.class.getName());
-    // Same ? as above - Map or IMap here?
-    private String waiterMapName;
-    private IMap<String,CompletableFuture<E>> waiterMap;
-
+    
     private IMap<PartitionedSequenceKey, E> eventJournal;
     private String eventJournalName;
 
@@ -86,34 +82,11 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
         eventJournal = getHazelcastInstance().getMap(eventJournalName);
         eventJournal_mapping_template = eventJournal_mapping_template.replaceAll("\\?", eventJournalName);
         getHazelcastInstance().getSql().execute(eventJournal_mapping_template);
-        waiterMapName = baseEventClassName + "Waiters";
-        waiterMap = getHazelcastInstance().getMap(baseEventClassName+"Waiters");
     }
 
     private String mapNameFromEventName(String eventName) {
         return "JRN." + eventName;
     }
-
-    class WaiterMapListener implements EntryAddedListener<String, E> {
-
-        @Override
-        public void entryAdded(EntryEvent<String, E> entryEvent) {
-            String key = entryEvent.getKey();
-            E event = entryEvent.getValue();
-            CompletableFuture<E> future = waiterMap.get(key);
-            if (future != null) {
-                // NOPE .. will be a copy, not the one we want to notify!
-                // See how we solved this for gRPC adapters ...
-                future.complete(event);
-                waiterMap.remove(key);
-            }
-        }
-    }
-
-    public void armWaiterListener() {
-        waiterMap.addEntryListener(new WaiterMapListener(), true);
-    }
-
 
     @Override
     public void subscribe(String eventName, Consumer<E> c) {
@@ -173,27 +146,5 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
         HazelcastInstance hz = super.getHazelcastInstance();
         String mapName = mapNameFromEventName(eventName);
         hz.getMap(mapName).clear();
-    }
-
-    // Experimental; if exposed via API probably want a default impl that throws
-    // UnsupportedOperationException as this won't work with some messaging APIs
-    public CompletableFuture<E> getOrWaitFor(String eventName, String doKey) {
-        // TODO: lazily create waiter list and listener the first time we're
-        //  called for a particular eventName; beware of race condition if
-        //  entry added to map before we get our listener armed.
-        HazelcastInstance hz = super.getHazelcastInstance();
-        String mapName = mapNameFromEventName(eventName);
-        IMap<PartitionedSequenceKey, E> map = hz.getMap(mapName);
-        E result = map.get(doKey);
-        if (result != null) {
-            return new CompletableFuture<E>().completedFuture(result);
-        }
-        // TODO: map needs to have index on the event key
-        CompletableFuture<E> future = new CompletableFuture<>();
-        // TODO: stick in map of waiters keyed by DO; a map listener will
-        //  complete the future when an event is received matching the key,
-        //  and also delete the entry for the waiter map.
-
-        return future;
     }
 }
