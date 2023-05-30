@@ -80,7 +80,7 @@ public abstract class SubscriptionManager<E extends SourcedEvent> implements Ser
         if (managersForEvent == null)
                 managersForEvent = new ArrayList<>();
         managersForEvent.add(impl);
-        event2submgr.put(eventClass, managersForEvent); // TODO: Serialization fails - SM not serializable
+        event2submgr.put(eventClass, managersForEvent);
         logger.info("Registered " + impl.getClass().getCanonicalName() + " for " + eventClass.getCanonicalName());
     }
 
@@ -155,7 +155,7 @@ public abstract class SubscriptionManager<E extends SourcedEvent> implements Ser
         Class<? extends SourcedEvent> eventClass = event.getClass();
         List<SubscriptionManager> mgrs = getSubscriptionManagers(eventClass);
         if (mgrs == null) {
-            System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it");
+            //System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it");
         } else {
             // Because we have different subscription managers per service, seems unnecessary to
             // use full canonical name for events, should be no collisions.
