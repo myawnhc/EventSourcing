@@ -38,8 +38,10 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
     // Is this safely kept locally, or does it need to be an IMap?
     Map<IMapSubMgr.SMKey<E>, UUID> subscriberMap = new HashMap<>();
     private static final Logger logger = Logger.getLogger(IMapSubMgr.class.getName());
-    
-    private IMap<PartitionedSequenceKey, E> eventJournal;
+
+    // IMap not serializable and SubMgr is used in pipeline creation -- so leaving
+    // template mapping in place but removing actual journal declaration
+    //private IMap<PartitionedSequenceKey, E> eventJournal;
     private String eventJournalName;
 
     private String eventJournal_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
@@ -79,7 +81,7 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
 
     public IMapSubMgr(String baseEventClassName) {
         eventJournalName = mapNameFromEventName(baseEventClassName);
-        eventJournal = getHazelcastInstance().getMap(eventJournalName);
+        //eventJournal = getHazelcastInstance().getMap(eventJournalName);
         eventJournal_mapping_template = eventJournal_mapping_template.replaceAll("\\?", eventJournalName);
         getHazelcastInstance().getSql().execute(eventJournal_mapping_template);
     }
@@ -129,7 +131,7 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
         IMap<PartitionedSequenceKey, E> map = hz.getMap(mapName);
         long sequence = hz.getPNCounter(eventName).getAndIncrement();
         PartitionedSequenceKey key = new PartitionedSequenceKey(sequence, event.getKey());
-        logger.info("IMapSubMgr publishes :" + eventName + ": " + event + " to " + mapName);
+        //logger.info("IMapSubMgr publishes :" + eventName + ": " + event + " to " + mapName);
         map.put(key, event);
     }
 
