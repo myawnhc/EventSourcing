@@ -17,6 +17,9 @@
 
 package org.hazelcast.eventsourcing.testobjects;
 
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
+import com.hazelcast.sql.SqlRow;
 import org.hazelcast.eventsourcing.event.DomainObject;
 
 import java.math.BigDecimal;
@@ -25,6 +28,18 @@ public class Account implements DomainObject<String> {
     private String accountNumber;
     private String accountName;
     private BigDecimal balance;
+
+    public Account() {}
+
+    public Account(GenericRecord fromGR) {
+        this.accountNumber = fromGR.getString("key");
+        this.accountName = fromGR.getString("accountName");
+        this.balance = fromGR.getDecimal("balance");
+    }
+
+    public Account(SqlRow data) {
+        throw new RuntimeException("Account hydration from SqlRow unimplemented");
+    }
 
     public String getAccountNumber() {
         return accountNumber;
@@ -53,5 +68,14 @@ public class Account implements DomainObject<String> {
     @Override
     public String getKey() {
         return accountNumber;
+    }
+
+    public GenericRecord toGenericRecord() {
+        GenericRecord gr = GenericRecordBuilder.compact("AccountService.account")
+                .setString("key", accountNumber)
+                .setString("accountName", accountName)
+                .setDecimal("balance", balance)
+                .build();
+        return gr;
     }
 }

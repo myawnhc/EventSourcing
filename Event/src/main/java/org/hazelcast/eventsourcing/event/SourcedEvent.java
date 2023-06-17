@@ -18,6 +18,7 @@
 package org.hazelcast.eventsourcing.event;
 
 import com.hazelcast.core.HazelcastJsonValue;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 
 import java.io.Serializable;
@@ -47,22 +48,25 @@ public abstract class SourcedEvent<D extends DomainObject<K>, K> implements Unar
     protected K key;
     public K getKey() { return key; }
 
-    /* Event class is needed in order to reconstruct the event when retrieving it via
-     * SQL, since SQL doesn't do polymorphism.  This is also the reason that data that
-     * is unique to event subclasses is stored in a JSON object rather than having
-     * event subclasses define them as member variables.
+    /* Event name is needed in order to reconstruct the event since it is stored as
+     * a GenericRecord in a data store that has mixed types.  The HydrationFactory
+     * is responsible for recreating an Event of the appropriate subtype when
+     * passed the event name and the GenericRecord
      */
-    protected String eventClass;
-    public String getEventClass() { return eventClass; }
-    public void setEventClass(String value) { eventClass = value; }
+
+    public static String EVENT_NAME = "eventName"; // used when adding event name to GenericRecord
+    public static String EVENT_TIME = "eventTime"; // timestamp of event time in SQL
+
+    protected String eventName; // Subclasses must set!
+    public String getEventName() { return eventName; }
+    public void setEventName(String value) { eventName = value; }
 
     protected long timestamp;
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long value) { timestamp = value; }
 
-    protected HazelcastJsonValue payload;
-    public HazelcastJsonValue getPayload() { return payload; }
-    public void setPayload(HazelcastJsonValue data) { payload = data; }
+    /** Return a Compact GenericRecord for the event */
+    abstract public GenericRecord toGenericRecord();
 
     public void publish() {
         SubscriptionManager.publish(this);

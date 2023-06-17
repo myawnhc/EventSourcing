@@ -27,8 +27,10 @@ import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
@@ -44,6 +46,7 @@ import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
  *
  * @param <D> Domain object type
  * @param <K> Domain object key type
+ * @param <E> Base class for events that will be handled in this pipeline
  */
 public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D,K>> implements Callable<Job> {
 
@@ -86,11 +89,11 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 ServiceFactories.sharedService((ctx) -> eventStore);
 
         // IMap/Materialized View as a service --
-        ServiceFactory<?, IMap<K, D>> materializedViewServiceFactory =
+        ServiceFactory<?, IMap<K, GenericRecord>> materializedViewServiceFactory =
                 ServiceFactories.iMapService(controller.getViewMapName());
 
         // Pending map as a service (so we can delete pending events when processed)
-        ServiceFactory<?, IMap<PartitionedSequenceKey<K>, SourcedEvent<D,K>>> pendingMapServiceFactory =
+        ServiceFactory<?, IMap<PartitionedSequenceKey<K>,GenericRecord>> pendingMapServiceFactory =
                 ServiceFactories.iMapService(controller.getPendingEventsMapName());
 
         // Completions map, used in Sink
@@ -98,17 +101,22 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         IMap<PartitionedSequenceKey, CompletionInfo> completionsMap =
                 controller.getHazelcast().getMap(completionsMapName);
 
+        HydrationFactory<D,K,E> hydrationFactory = controller.getEventStore().getHydrationFactory();
+
         Pipeline p = Pipeline.create();
         p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
                 .withoutTimestamps()
                 // Update SourcedEvent with timestamp.  Forcing local parallelism to 1 for this
                 // stage as otherwise we may receive events out of order; in most cases this is
-                // OK but in a few cases, like account transasction ahead of account being opened,
+                // OK but in a few cases, like account transaction ahead of account being opened,
                 // can lead to failures
                 .map(pendingEvent -> {
                     PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
                     //logger.info("Pipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
-                    SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    //SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    GenericRecord eventgr = (GenericRecord) pendingEvent.getValue();
+                    String eventName = eventgr.getString("eventName");
+                    SourcedEvent<D,K> event = hydrationFactory.hydrateEvent(eventName, eventgr);
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
                 }).setLocalParallelism(1).setName("Update SourcedEvent with timestamp")
@@ -116,18 +124,29 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1();
-                    eventstore.append(key, (E) event);
+                    eventstore.append(key, event);
                     return tuple2;
                 }).setName("Persist Event to event store")
                 // Update materialized view (using EntryProcessor)
                 .mapUsingService(materializedViewServiceFactory, (viewMap, tuple2) -> {
+                    // TODO: this stage occasionally reports a NPE (no line # info available)
                     SourcedEvent<D,K> event = tuple2.f1();
-                    viewMap.executeOnKey(event.getKey(), (EntryProcessor<K, D, D>) viewEntry -> {
-                        D domainObject = viewEntry.getValue();
-                        //K domainObjectKey = viewEntry.getKey();
+                    //logger.info("EventSourcingPipeline updating materialized view for event " + event);
+                    viewMap.executeOnKey(event.getKey(), (EntryProcessor<K,GenericRecord,GenericRecord>) viewEntry -> {
+                        GenericRecord domainObjectGR = viewEntry.getValue();
+                        //K domainObjectKey = viewEntry.getKey(); // NOT NEEDED
+                        D domainObject = null; // OK for events that do the initial DO creation
+                        if (domainObjectGR != null) {
+                            domainObject = hydrationFactory.hydrateDomainObject(domainObjectGR);
+                            //logger.info("  hydrated domain object " + domainObjectGR);
+                        }
+//                        else {
+//                            logger.info("  null domain object (OK for CREATE type events");
+//                        }
                         domainObject = event.apply(domainObject);
-                        viewEntry.setValue(domainObject);
-                        return domainObject;
+                        //logger.info("  domain object after applying event: " + domainObject);
+                        viewEntry.setValue(domainObject.toGenericRecord());
+                        return domainObject.toGenericRecord();
                     });
                     return tuple2;
                 }).setName("Update Materialized View")
@@ -143,7 +162,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1(); // used only as return which goes to nop stage
                     if (debugRemoval) {
-                        SourcedEvent<D,K> removed = pendingMap.remove(key);
+                        //SourcedEvent<D,K> removed = pendingMap.remove(key);
+                        GenericRecord removed = pendingMap.remove(key);
                         if (removed == null) {
                             logger.warning("Failed to remove pending event with key " + key);
                         }
@@ -155,7 +175,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .writeTo(Sinks.mapWithUpdating(completionsMap,
                         tuple -> tuple.f0(),
                         (completionInfo, tuple) -> {
-                            System.out.println("Updating " + completionsMapName + " in sink");
+                            //System.out.println("Updating " + completionsMapName + " in sink");
                             if (completionInfo == null) {
                                 logger.warning("No completion info to update for key " + tuple.f0());
                                 return null;

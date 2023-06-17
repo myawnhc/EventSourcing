@@ -25,16 +25,15 @@
 
     <jet enabled="true"/>
     
-    <serialization>
-        <compact-serialization>
-            <serializers>
-                <serializer>org.hazelcast.eventsourcing.testobjects.OpenAccountEventSerializer</serializer>
-                <serializer>org.hazelcast.eventsourcing.testobjects.BalanceChangeEventSerializer</serializer>
-                <serializer>org.hazelcast.eventsourcing.testobjects.AccountCompactionEventSerializer</serializer>
-
-            </serializers>
-        </compact-serialization>
-    </serialization>
+<!--    <serialization>-->
+<!--        <compact-serialization>-->
+<!--            <serializers>-->
+<!--                <serializer>org.hazelcast.eventsourcing.testobjects.OpenAccountEventSerializer</serializer>-->
+<!--                <serializer>org.hazelcast.eventsourcing.testobjects.BalanceChangeEventSerializer</serializer>-->
+<!--                <serializer>org.hazelcast.eventsourcing.testobjects.AccountCompactionEventSerializer</serializer>-->
+<!--            </serializers>-->
+<!--        </compact-serialization>-->
+<!--    </serialization>-->
 
     <map name="*_PENDING">
         <event-journal enabled="true">

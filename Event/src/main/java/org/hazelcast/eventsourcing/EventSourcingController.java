@@ -22,7 +22,9 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.jet.Job;
 import com.hazelcast.map.IMap;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
@@ -31,8 +33,10 @@ import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
+import java.util.function.BiFunction;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -78,12 +82,12 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     public String getViewMapName() {
         return viewMapName;
     }
-    private IMap<K, DomainObject<K>> viewMap;
-    public IMap<K, DomainObject<K>> getViewMap() { return viewMap; }
+    private IMap<K, GenericRecord> viewMap;
+    public IMap<K, GenericRecord> getViewMap() { return viewMap; }
 
     // Pending Queue / Map config
     private String pendingEventsMapName;
-    private IMap<PartitionedSequenceKey<K>, SourcedEvent<D,K>> pendingEventsMap;
+    private IMap<PartitionedSequenceKey<K>, GenericRecord> pendingEventsMap;
     public String getPendingEventsMapName() { return pendingEventsMapName; }
 
     // Completions map
@@ -93,6 +97,11 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     // Pipeline
     private Job pipelineJob;
+
+    // Hydration Factory
+    private HydrationFactory<D,K,E> hydrationFactory;
+
+
 
     static {
         InputStream stream = EventSourcingController.class.getClassLoader().
@@ -105,6 +114,8 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             e.printStackTrace();
         }
     }
+
+
 
     /////////////
     // Builder
@@ -148,11 +159,18 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 //            return this;
 //        }
 
+        public EventSourcingControllerBuilder<D,K,E> hydrationFactory(HydrationFactory<D,K,E> hf) {
+            controller.hydrationFactory = hf;
+            return this;
+        }
+
         // TODO: compaction policy
         // TODO: spill-to-disk enablement (maybe related to compaction policy)
 
         private void buildEventStore() {
             controller.eventStore = new EventStore<>(controller.eventStoreName, controller.hazelcast);
+            if (controller.hydrationFactory != null)
+                controller.eventStore.registerHydrationFactory(controller.hydrationFactory);
         }
 
         ///////////////////////
@@ -263,7 +281,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         long sequence = getNextSequence();
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
         //logger.info("handleEvent: PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
-        pendingEventsMap.put(psk, event);
+        pendingEventsMap.put(psk, event.toGenericRecord());
         completionsMap.put(psk, new CompletionInfo());
         return psk;
     }

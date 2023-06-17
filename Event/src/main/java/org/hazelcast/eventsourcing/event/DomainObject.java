@@ -17,6 +17,8 @@
 
 package org.hazelcast.eventsourcing.event;
 
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+
 /** Representation of a Domain Object in the Event Sourcing system.  The key relationship between Domain
  * Objects and Events is that a domain object can be created (materialized) by iterating over the set
  * of Events whose key matches the key of the domain object, e.g.
@@ -34,4 +36,5 @@ package org.hazelcast.eventsourcing.event;
  */
 public interface DomainObject<K> {
     K getKey();
+    GenericRecord toGenericRecord();
 }

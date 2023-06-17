@@ -20,12 +20,8 @@ package org.hazelcast.eventsourcing.event;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import org.hazelcast.eventsourcing.EventSourcingController;
-import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
-import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
-import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.testobjects.Account;
-import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
 import org.hazelcast.eventsourcing.testobjects.AccountHydrationFactory;
 import org.hazelcast.eventsourcing.testobjects.OpenAccountEvent;
@@ -37,11 +33,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.Set;
 
-public class OpenAccountTest {
+public class EventStoreTests {
 
     static EventSourcingController<Account, String, AccountEvent> controller;
-    static SubscriptionManager<AccountEvent> submgr;
     static HazelcastInstance hazelcast;
 
     @BeforeAll
@@ -51,10 +47,6 @@ public class OpenAccountTest {
         controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
                 .hydrationFactory(new AccountHydrationFactory())
                 .build();
-
-        // Create subscription manager, register it
-        submgr = new IMapSubMgr<>("AccountEvent");
-        SubscriptionManager.register(hazelcast, OpenAccountEvent.QUAL_EVENT_NAME, submgr);
     }
 
     @AfterAll
@@ -70,21 +62,33 @@ public class OpenAccountTest {
     void tearDown() {}
 
     @Test
-    void verifyInitialBalance() {
-        AccountConsumer consumer = new AccountConsumer();
-        submgr.subscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
-
+    void verifyAppend() {
         // OpenAccountEvent is a SourcedEvent
-        OpenAccountEvent open = new OpenAccountEvent("12345", "Bob", BigDecimal.valueOf(777.22));
-        controller.handleEvent(open);
+        OpenAccountEvent open1 = new OpenAccountEvent("11111", "Bob", BigDecimal.valueOf(111.22));
+        PartitionedSequenceKey<String> key1 = controller.handleEvent(open1);
 
-        // Get a materialized view that reflects the event
-        EventStore<Account, String, AccountEvent> es = controller.getEventStore();
-        Account a = es.materialize(new Account(), "12345");
+        OpenAccountEvent open2 = new OpenAccountEvent("22222", "Rick", BigDecimal.valueOf(333.44));
+        PartitionedSequenceKey<String> key2 = controller.handleEvent(open2);
 
-        Assertions.assertEquals(BigDecimal.valueOf(777.22), a.getBalance());
-        Assertions.assertEquals(1, consumer.getEventCount());
+        OpenAccountEvent open3 = new OpenAccountEvent("33333", "Jim", BigDecimal.valueOf(555.66));
+        PartitionedSequenceKey<String> key3 = controller.handleEvent(open3);
 
-        submgr.unsubscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
+        // Allow pipeline to finish processing events
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        int storeSize = controller.getEventStore().getSize();
+        Assertions.assertEquals(3, storeSize);
+
+        Set<PartitionedSequenceKey<String>> keySet = controller.getEventStore().getKeys();
+        Assertions.assertEquals(3, keySet.size());
+        Assertions.assertTrue(keySet.contains(key1));
+        Assertions.assertTrue(keySet.contains(key2));
+        Assertions.assertTrue(keySet.contains(key3));
+
+        controller.getEventStore().clearData();
     }
 }

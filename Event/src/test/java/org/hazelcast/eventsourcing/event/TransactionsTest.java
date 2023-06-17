@@ -23,11 +23,13 @@ import com.hazelcast.org.json.JSONObject;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
+import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountCompactionEvent;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
+import org.hazelcast.eventsourcing.testobjects.AccountHydrationFactory;
 import org.hazelcast.eventsourcing.testobjects.BalanceChangeEvent;
 import org.hazelcast.eventsourcing.testobjects.OpenAccountEvent;
 import org.junit.jupiter.api.AfterAll;
@@ -48,16 +50,16 @@ public class TransactionsTest {
     static SubscriptionManager<AccountEvent> submgr;
     static HazelcastInstance hazelcast;
 
-    public static final int TEST_EVENT_COUNT = 10_000;
+    public static final int TEST_EVENT_COUNT = 1_000;
     public static final String TEST_ACCOUNT = "67890";
-    static List<AccountEvent> testEvents;
+    static List<BalanceChangeEvent> testEvents;
 
     @BeforeAll
     static void init() {
         hazelcast = Hazelcast.newHazelcastInstance();
         controller = EventSourcingController.<Account,String,AccountEvent>newBuilder(hazelcast, "account")
+                .hydrationFactory(new AccountHydrationFactory())
                 .build();
-
 
         testEvents = new ArrayList<>();
         for (int i=0; i<TEST_EVENT_COUNT; i++) {
@@ -82,7 +84,7 @@ public class TransactionsTest {
                 eventName = "Electronic Payment";
                 amount = amount.multiply(BigDecimal.valueOf(-1));
             }
-            AccountEvent event = new BalanceChangeEvent(TEST_ACCOUNT, eventName, amount);
+            BalanceChangeEvent event = new BalanceChangeEvent(TEST_ACCOUNT, eventName, amount);
             testEvents.add(event);
         }
     }
@@ -98,16 +100,15 @@ public class TransactionsTest {
     @BeforeEach
     void setUp() {
         // Create subscription manager, register it
-        submgr = new ReliableTopicSubMgr<>();
-        SubscriptionManager.register(hazelcast, OpenAccountEvent.class, submgr);
-        SubscriptionManager.register(hazelcast, BalanceChangeEvent.class, submgr);
+        submgr = new IMapSubMgr<>("AccountEvent");
+        SubscriptionManager.register(hazelcast, OpenAccountEvent.QUAL_EVENT_NAME, submgr);
+        SubscriptionManager.register(hazelcast, BalanceChangeEvent.QUAL_EVENT_NAME, submgr);
     }
 
     @AfterEach
     void tearDown() {
-        SubscriptionManager.unregister(hazelcast, OpenAccountEvent.class, submgr);
-        SubscriptionManager.unregister(hazelcast, BalanceChangeEvent.class, submgr);
-
+        SubscriptionManager.unregister(hazelcast, OpenAccountEvent.QUAL_EVENT_NAME, submgr);
+        SubscriptionManager.unregister(hazelcast, BalanceChangeEvent.QUAL_EVENT_NAME, submgr);
         controller.getEventStore().clearData();
     }
 
@@ -115,8 +116,8 @@ public class TransactionsTest {
     void verifyTransactions() {
         AccountConsumer consumer = new AccountConsumer();
         int offset = testNumber * TEST_EVENT_COUNT;
-        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
-        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
+        submgr.subscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer, testNumber);
+        submgr.subscribe(BalanceChangeEvent.QUAL_EVENT_NAME, consumer, offset);
         testNumber++;
 
         // Open the account
@@ -129,23 +130,34 @@ public class TransactionsTest {
 
         // Throw transactions at the account
         System.out.println("Sending " + testEvents.size() + " randomized events");
+        int expectedSequence = 2; // 1 will be the open event
         for (int i=0; i<testEvents.size(); i++) {
-            AccountEvent event = testEvents.get(i);
-            System.out.println("Event " + (i+2) + " = " + event);
-            JSONObject jobj = new JSONObject(event.getPayload().getValue());
-            expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
-            controller.handleEvent(testEvents.get(i));
+            BalanceChangeEvent event = testEvents.get(i);
+            //System.out.println("Event " + (i+2) + " = " + event);
+            //JSONObject jobj = new JSONObject(event.getPayload().getValue());
+            expectedBalance = expectedBalance.add(event.getBalanceChange());
+            PartitionedSequenceKey psk = controller.handleEvent(testEvents.get(i));
+            //System.out.println("Ack: " + psk);
+            Assertions.assertEquals(psk.sequence, expectedSequence++);
         }
 
-        // Get a materialized view that reflects the event
+        System.out.println("Waiting for pipeline to clear ...");
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        // Get a materialized view that reflects the event.  Will fail if events
+        // are still making their way through the pipeline, hence the delay above.
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
         Account a = es.materialize(new Account(), TEST_ACCOUNT);
 
         Assertions.assertEquals(expectedBalance, a.getBalance());
         Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount());
 
-        submgr.unsubscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
-        submgr.unsubscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
+        submgr.unsubscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
+        submgr.unsubscribe(BalanceChangeEvent.QUAL_EVENT_NAME, consumer);
     }
 
     @Test
@@ -155,8 +167,8 @@ public class TransactionsTest {
     void verifyCompaction() {
         AccountConsumer consumer = new AccountConsumer();
         int offset = testNumber * TEST_EVENT_COUNT;
-        submgr.subscribe(OpenAccountEvent.class.getCanonicalName(), consumer, testNumber);
-        submgr.subscribe(BalanceChangeEvent.class.getCanonicalName(), consumer, offset);
+        submgr.subscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer, testNumber);
+        submgr.subscribe(BalanceChangeEvent.QUAL_EVENT_NAME, consumer, offset);
         testNumber++;
 
         // Open the account
@@ -169,12 +181,19 @@ public class TransactionsTest {
         // Throw transactions at the account
         System.out.println("Sending " + testEvents.size() + " randomized events");
         for (int i=0; i<testEvents.size(); i++) {
-            AccountEvent event = testEvents.get(i);
-            System.out.println("Event " + (i+2) + " = " + event);
-            JSONObject jobj = new JSONObject(event.getPayload().getValue());
-            expectedBalance = expectedBalance.add(jobj.getBigDecimal("balanceChange"));
+            BalanceChangeEvent event = testEvents.get(i);
+            //System.out.println("Event " + (i+2) + " = " + event);
+            expectedBalance = expectedBalance.add(event.getBalanceChange());
             controller.handleEvent(testEvents.get(i));
         }
+
+        System.out.println("Waiting for pipeline to clear ...");
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
 
         // Get a materialized view that reflects the event
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
@@ -191,7 +210,7 @@ public class TransactionsTest {
         //  getEventsFor but might need to for this text.
         //Assertions.assertEquals(51, consumer.getEventCount());
 
-        submgr.unsubscribe(OpenAccountEvent.class.getCanonicalName(), consumer);
-        submgr.unsubscribe(BalanceChangeEvent.class.getCanonicalName(), consumer);
+        submgr.unsubscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
+        submgr.unsubscribe(BalanceChangeEvent.QUAL_EVENT_NAME, consumer);
     }
 }

@@ -20,20 +20,21 @@ package org.hazelcast.eventsourcing.eventstore;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
 import com.hazelcast.map.IMap;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
 import com.hazelcast.sql.SqlStatement;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Logger;
 
 /** Hazelcast-centric implementation of an Event Store to support the Event Sourcing
@@ -60,17 +61,17 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     private static final Logger logger = Logger.getLogger(EventStore.class.getName());
 
     protected String eventMapName;
-    transient protected IMap<PartitionedSequenceKey<K>, E> eventMap;
+    /* Event map's Value is SourcedEvent<D,K> serialized as a compact GenericRecord */
+    transient protected IMap<PartitionedSequenceKey<K>, Object> eventMap;
     transient protected SqlService sqlService;
 
-    private String mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
-            "TYPE IMap\n" +
-            "OPTIONS (\n" +
-            "  'keyFormat' = 'java',\n" +
-            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
-            "  'valueFormat' = 'java',\n" +
-            "  'valueJavaClass' = 'org.hazelcast.eventsourcing.event.SourcedEvent'\n" +
-            ")";
+
+    /** Since events are stored as GenericRecords, we need a way to reconstruct the domain
+     *  objects they represent when retrieving them.  The service layer will pass a
+     *  hydration factory which can reconstitute both domain objects and events, from
+     *  GenericRecord representation or from a SqlRow when SQL queries are used.
+     */
+    private HydrationFactory hydrationFactory;
 
     public EventStore(String mapName, HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
@@ -78,15 +79,22 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         this.eventMap = hazelcast.getMap(mapName);
     }
 
+    public void registerHydrationFactory(HydrationFactory f) {
+        this.hydrationFactory = f;
+    }
+
+    public HydrationFactory<D,K,E> getHydrationFactory() {
+        return hydrationFactory;
+    }
+
     /** Append an event to the event store
      *
      * @param key key used to uniquely identify the event
      * @param event the event to be stored
      */
-    public void append(PartitionedSequenceKey<K> key, E event) {
-        eventMap.set(key, event);
+    public void append(PartitionedSequenceKey<K> key, SourcedEvent<D,K> event) {
+        eventMap.set(key, event.toGenericRecord());
     }
-
 
     /** Materialize a view of the domain object using the provided event list.  Internally
      * used by compaction and other materialize methods.
@@ -105,7 +113,6 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         return materializedObject;
     }
 
-
     /** Materialize a domain object from the event store.  In normal operation this isn't
      * used as we always keep an up-to-date materialized view, but in a recovery
      * scenario where the in-memory copy is lost this will rebuild it.
@@ -122,6 +129,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      */
     private D materialize(D startingWith, K keyValue, int count, long upToTimestamp) {
         List<SourcedEvent<D,K>> events = getEventsFor(keyValue, count, upToTimestamp);
+        System.out.println("Materializing " + keyValue + " with " + events.size() + " events");
         return materialize(startingWith, events);
     }
 
@@ -165,13 +173,14 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, upToTimestamp);
     }
 
+    /** */
     private List<SourcedEvent<D,K>> getEventsFor(K keyValue, int count, long upToTimestamp) {
         initSqlService();
 
         // Substitution of the table name via setParameters not supported as query validator
         // needs to the real table name to verify column names, etc.
         String selectQuery = "select * from " + eventMapName +
-                " WHERE CAST(\"key\" AS VARCHAR) = ? ORDER BY __key";
+                " WHERE CAST(doKey AS VARCHAR) = ? ORDER BY sequence";
         SqlStatement statement2 = new SqlStatement(selectQuery)
                 .setParameters(List.of(keyValue));
         //logger.info("Select Events Query: " + statement2);
@@ -181,20 +190,12 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         List<SourcedEvent<D,K>> events = new ArrayList<>();
         while (iter.hasNext()) {
             SqlRow row = iter.next();
-            String eventClass = row.getObject("eventClass");
-            try {
-                Class<? extends SourcedEvent<D,K>> k = (Class<? extends SourcedEvent<D, K>>) Class.forName(eventClass);
-                Constructor<? extends SourcedEvent<D, K>> c = k.getConstructor(SqlRow.class);
-                SourcedEvent<D,K> event = c.newInstance(row);
-                if (event.getTimestamp() >= upToTimestamp)
-                    break;
-                events.add(event);
-                if (events.size() >= count)
-                    break;
-            } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException | IllegalAccessException |
-                     InvocationTargetException e) {
-                throw new RuntimeException(e);
-            }
+            // Doesn't work given that CREATE MAPPING describes individual columns rather than a
+            // single OBJECT type column.  For flexible querying, we want individual columns mapped.
+            //GenericRecord data = (GenericRecord) row.getObject(0);
+            String eventName = row.getObject("eventName");
+            SourcedEvent<D,K> event = hydrationFactory.hydrateEvent(eventName, row);
+            events.add(event);
         }
         return events;
     }
@@ -202,17 +203,15 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     private void initSqlService() {
         if (sqlService == null) {
             sqlService = hazelcast.getSql();
-            // CREATE MAPPING doesn't support dynamic parameters, so we do the
-            // substitution here.
-            mapping_template = mapping_template.replaceAll("\\?", eventMapName);
-            sqlService.execute(mapping_template);
+            String sqlMapping = hydrationFactory.getEventMapping(eventMapName);
+            sqlService.execute(sqlMapping);
         }
     }
 
     private long getEventCountFor(K keyValue) {
         initSqlService();
-        String countQuery = "select COUNT(*) as event_count from " + eventMapName + " WHERE CAST(\"" +
-                "key" + "\" AS VARCHAR) = '" + keyValue + "'";
+        String countQuery = "select COUNT(*) as event_count from " + eventMapName +
+                " WHERE CAST(doKey AS VARCHAR) = '" + keyValue + "'";
         SqlStatement statement = new SqlStatement(countQuery);
         //logger.info("Count query: " + statement);
         SqlResult result = sqlService.execute(statement);
@@ -227,10 +226,11 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
 
     // We have to iterate through to find the highest sequence number to be deleted
     // since sequence numbers are not per-domain object
+    // TODO: this is probably broken - there is no PSK field, use sequence instead
     private void deleteOldestEvents(K keyValue, int count) {
         initSqlService();
-        String selectOldest = "select __key as psk from " + eventMapName + " WHERE CAST(\"" +
-                "key\" AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
+        String selectOldest = "select __key as psk from " + eventMapName +
+                " WHERE CAST(doKey AS VARCHAR) = '" + keyValue + "' ORDER BY psk";
         SqlStatement statement = new SqlStatement(selectOldest);
         //logger.info("Select Oldest: " + statement);
         SqlResult result = sqlService.execute(statement);
@@ -279,7 +279,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
                 removalCount, Long.MAX_VALUE);
         domainObject = materialize(domainObject, eventsToSummarize);
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(0, keyValue);
-         compactionEvent.initFromDomainObject(domainObject);
+        compactionEvent.initFromDomainObject(domainObject);
         // Since compaction event isn't processed thru pending -> pipeline, it doesn't get timestamp set
         ((SourcedEvent<D,K>)compactionEvent).setTimestamp(System.currentTimeMillis());
         //compactionEvent.writeAsCheckpoint(domainObject, psk);
@@ -300,4 +300,12 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
     public void clearData() {
         this.eventMap.clear();
     }
+
+    /** Used by some unit tests; no reason to ever call this in production  */
+    public int getSize() {
+        return this.eventMap.size();
+    }
+
+    public Set<PartitionedSequenceKey<K>> getKeys() { return this.eventMap.keySet(); }
+
 }

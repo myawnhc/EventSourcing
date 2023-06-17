@@ -41,7 +41,8 @@ import java.util.logging.Logger;
  * likely) that the pub-sub APIs may need to evolve to support multiple protocols
  * so the APIs of this part of the framework should be considered unstable.
  *
- * @param <E> Event class for which subscriptions are managed
+ * @param <E> Event class for which subscriptions are managed; should be
+ *           granular (i.e.,
  */
 public abstract class SubscriptionManager<E> implements Serializable {
 
@@ -49,7 +50,7 @@ public abstract class SubscriptionManager<E> implements Serializable {
     public enum STARTING { FROM_NEXT, FROM_BEGINNING, FROM_OFFSET } // FROM_TIMESTAMP also?
 
     private static HazelcastInstance hazelcast = null;
-    private static IMap<Class<? extends SourcedEvent>, List<SubscriptionManager>> event2submgr;
+    private static IMap<String, List<SubscriptionManager>> event2submgr;
     // Need a way to identify different subscription managers that may be of the same subtype even
     // in serialized form where other identity checks may indicate not equal.
     private final UUID uuid;
@@ -63,39 +64,39 @@ public abstract class SubscriptionManager<E> implements Serializable {
      * two-step process, first the Subscription Manager subclass must be registered to
      * handle the events, and then the consumer of the events must subscribe.
      * @param hazelcast Hazelcast Instance handling the subscriptions
-     * @param eventClass event class for which subscription manager should be registered
+     * @param eventName event for which subscription manager should be registered
      * @param impl implementation of SubscriptionManager to register
      */
-    public static void register(HazelcastInstance hazelcast, Class<? extends SourcedEvent> eventClass, SubscriptionManager impl) {
+    public static void register(HazelcastInstance hazelcast, String eventName, SubscriptionManager impl) {
         if (SubscriptionManager.hazelcast == null) {
             SubscriptionManager.hazelcast = hazelcast;
             event2submgr = hazelcast.getMap("EventClass2SubMgr");
         }
 
-        List<SubscriptionManager> managersForEvent = event2submgr.get(eventClass);
+        List<SubscriptionManager> managersForEvent = event2submgr.get(eventName);
         if (managersForEvent == null)
                 managersForEvent = new ArrayList<>();
         managersForEvent.add(impl);
-        event2submgr.put(eventClass, managersForEvent);
-        logger.info("Registered " + impl.getClass().getCanonicalName() + " for " + eventClass.getCanonicalName());
+        event2submgr.put(eventName, managersForEvent);
+        logger.info("Registered " + impl.getClass().getCanonicalName() + " for " + eventName);
     }
 
     /** Unegister a subscription manager for an event class.
      *
      * @param hazelcast Hazelcast Instance handling the subscriptions
-     * @param eventClass event class for which subscription manager should be registered
+     * @param eventName event  for which subscription manager should be registered
      * @param impl implementation of SubscriptionManager to register
      */
-    public static void unregister(HazelcastInstance hazelcast, final Class<? extends SourcedEvent> eventClass, SubscriptionManager impl) {
+    public static void unregister(HazelcastInstance hazelcast, String eventName, SubscriptionManager impl) {
         if (SubscriptionManager.hazelcast == null) {
             SubscriptionManager.hazelcast = hazelcast;
             event2submgr = hazelcast.getMap("EventClass2SubMgr");
         }
 
-        List<SubscriptionManager> managersForEvent = event2submgr.get(eventClass);
+        List<SubscriptionManager> managersForEvent = event2submgr.get(eventName);
         if (managersForEvent == null) {
             logger.warning("Failed to unregister " + impl.getClass().getCanonicalName() + " for " +
-                    eventClass.getCanonicalName() + ", no managers are registered for this event");
+                    eventName + ", no managers are registered for this event");
             return;
         }
 
@@ -106,22 +107,22 @@ public abstract class SubscriptionManager<E> implements Serializable {
             if (sm.uuid.equals(impl.uuid)) {
                 matched = true;
                 iter.remove();
-                logger.info("Unregistered " + impl.getClass().getCanonicalName() + " for " + eventClass.getCanonicalName());
+                logger.info("Unregistered " + impl.getClass().getCanonicalName() + " for " + eventName);
                 break;
             }
         }
         if (!matched) {
             logger.warning("Failed to unregister " + impl.getClass().getCanonicalName() + " for " +
-                    eventClass.getCanonicalName() + ", not registered");
+                    eventName + ", not registered");
         }
     }
 
     /** Returns the SubscriptionManager implementations registered for an event */
-    private static List<SubscriptionManager> getSubscriptionManagers(Class<? extends SourcedEvent> eventClass) {
+    private static List<SubscriptionManager> getSubscriptionManagers(String eventName) {
         if (SubscriptionManager.event2submgr == null) {
             return Collections.emptyList();
         }
-        return event2submgr.get(eventClass);
+        return event2submgr.get(eventName);
     }
 
     /** Subscribe the provided consumer to the named event */
@@ -148,13 +149,13 @@ public abstract class SubscriptionManager<E> implements Serializable {
      * @param event event to be published
      */
     public static <E extends SourcedEvent> void publish(E event) {
-        Class<? extends SourcedEvent> eventClass = event.getClass();
-        List<SubscriptionManager> mgrs = getSubscriptionManagers(eventClass);
+        String eventName = event.getEventName();
+        List<SubscriptionManager> mgrs = getSubscriptionManagers(eventName);
         if (mgrs == null) {
             System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it:");
         }
         for (SubscriptionManager manager : mgrs) {
-            manager.publish(eventClass.getCanonicalName(), event);
+            manager.publish(eventName, event);
         }
     }
 
