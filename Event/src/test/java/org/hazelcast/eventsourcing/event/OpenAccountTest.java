@@ -24,6 +24,7 @@ import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
 import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
@@ -37,6 +38,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 public class OpenAccountTest {
 
@@ -70,13 +74,16 @@ public class OpenAccountTest {
     void tearDown() {}
 
     @Test
-    void verifyInitialBalance() {
+    void verifyInitialBalance() throws ExecutionException, InterruptedException {
         AccountConsumer consumer = new AccountConsumer();
         submgr.subscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
 
         // OpenAccountEvent is a SourcedEvent
         OpenAccountEvent open = new OpenAccountEvent("12345", "Bob", BigDecimal.valueOf(777.22));
-        controller.handleEvent(open);
+        CompletableFuture<CompletionInfo> completion = controller.handleEvent(open, UUID.randomUUID());
+        CompletionInfo info = completion.get();
+        Assertions.assertTrue(info.getEvent() instanceof OpenAccountEvent);
+        Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, info.status);
 
         // Get a materialized view that reflects the event
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
