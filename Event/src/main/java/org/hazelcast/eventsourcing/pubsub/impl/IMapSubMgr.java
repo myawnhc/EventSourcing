@@ -136,11 +136,15 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
         map.put(key, event);
     }
 
-    //@Override
+    @Override
     public StreamSource<Map.Entry<PartitionedSequenceKey, E>> getStreamSource(String eventName) {
-        //HazelcastInstance hz = super.getHazelcastInstance();
         String mapName = mapNameFromEventName(eventName);
-        //IMap<PartitionedSequenceKey, E> map = hz.getMap(mapName);
+        // There must be at least one subscriber for messages to be written to the map,
+        // so add an empty subscriber.
+        subscribe(eventName, eventMessage -> {
+            // nop
+        });
+        logger.info("IMapSubMgr getStreamSource(" + eventName + ") subscribes to " + mapName);
         return Sources.mapJournal(mapName, JournalInitialPosition.START_FROM_OLDEST);
     }
 

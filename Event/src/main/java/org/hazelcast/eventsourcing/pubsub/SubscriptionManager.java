@@ -18,14 +18,19 @@
 package org.hazelcast.eventsourcing.pubsub;
 
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.jet.pipeline.StreamSource;
 import com.hazelcast.map.IMap;
+import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -55,6 +60,9 @@ public abstract class SubscriptionManager<E> implements Serializable {
     // in serialized form where other identity checks may indicate not equal.
     private final UUID uuid;
     private static final Logger logger = Logger.getLogger(SubscriptionManager.class.getName());
+
+    // Warning about unpublished messages can get quite verbose - notify only once per event
+    private static Set<String> noSubscriberNotificationsShown = new HashSet<>();
 
     protected SubscriptionManager() {
         this.uuid = UUID.randomUUID();
@@ -145,6 +153,7 @@ public abstract class SubscriptionManager<E> implements Serializable {
      * @param event event to be published
      */
     protected abstract void publish(String topicName, E event);
+
     /** Publish a message to all subscribers
      * @param event event to be published
      */
@@ -152,14 +161,23 @@ public abstract class SubscriptionManager<E> implements Serializable {
         String eventName = event.getEventName();
         List<SubscriptionManager> mgrs = getSubscriptionManagers(eventName);
         if (mgrs == null) {
-            System.out.println("NOT PUBLISHING " + event + " because no subscription manager has registered for it:");
-        }
-        for (SubscriptionManager manager : mgrs) {
-            manager.publish(eventName, event);
+            if (noSubscriberNotificationsShown.contains(event.getEventName())) {
+                // no further warnings will be shown
+            } else {
+                noSubscriberNotificationsShown.add(event.getEventName());
+                logger.warning("SubscriptionManager not publishing " + event + " because no implementor has registered for it");
+            }
+        } else {
+            for (SubscriptionManager manager : mgrs) {
+                manager.publish(eventName, event);
+            }
         }
     }
 
-    // Implementing subclasses will likely store their event-to-consumer maps in Hazelcast
+    public abstract StreamSource<Map.Entry<PartitionedSequenceKey, E>> getStreamSource(String eventName);
+
+
+        // Implementing subclasses will likely store their event-to-consumer maps in Hazelcast
     protected HazelcastInstance getHazelcastInstance() {
         return hazelcast;
     }

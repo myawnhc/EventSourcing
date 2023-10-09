@@ -23,7 +23,6 @@ import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.pubsub.impl.IMapSubMgr;
-import org.hazelcast.eventsourcing.pubsub.impl.ReliableTopicSubMgr;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountConsumer;

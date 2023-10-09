@@ -25,17 +25,19 @@ import com.hazelcast.jet.pipeline.ServiceFactories;
 import com.hazelcast.jet.pipeline.ServiceFactory;
 import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.jet.pipeline.Sources;
-import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.GenericRecordSupport;
 import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.logging.Logger;
 
@@ -54,10 +56,13 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
     private final String pendingEventsMapName;
     private static final Logger logger = Logger.getLogger(EventSourcingPipeline.class.getName());
 
+    private boolean logSpecificEvents = false;
+    private List<String> eventsToLog = new ArrayList<>();
 
     public EventSourcingPipeline(EventSourcingController<D,K,E> controller) {
         this.controller = controller;
         this.pendingEventsMapName = controller.getPendingEventsMapName();
+        //eventsToLog.add("OrderService.ReserveInventoryEvent");
     }
 
     /** Create the pipeline job and submit it for execution.
@@ -83,6 +88,10 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
 
     private Pipeline createPipeline() {
 
+        // Must make local copy or some mapFns won't be serializable
+        boolean logSpecificEvents = this.logSpecificEvents;
+        List<String> eventsToLog = this.eventsToLog;
+
         // Event Store as a service
         EventStore<D,K,E> eventStore = controller.getEventStore();
         ServiceFactory<?, EventStore<D,K,E>> eventStoreServiceFactory =
@@ -98,7 +107,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
 
         // Completions map, used in Sink
         String completionsMapName = controller.getCompletionMapName();
-        IMap<PartitionedSequenceKey, CompletionInfo> completionsMap =
+        IMap<PartitionedSequenceKey, GenericRecord> completionsMap =
                 controller.getHazelcast().getMap(completionsMapName);
 
         HydrationFactory<D,K,E> hydrationFactory = controller.getEventStore().getHydrationFactory();
@@ -112,11 +121,15 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 // can lead to failures
                 .map(pendingEvent -> {
                     PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
-                    //logger.info("Pipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
+                    //logger.info("EventSourcingPipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
                     //SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
+                    logger.info("EventSourcePipeline entry with event " + pendingEvent);
                     GenericRecord eventgr = (GenericRecord) pendingEvent.getValue();
                     String eventName = eventgr.getString("eventName");
                     SourcedEvent<D,K> event = hydrationFactory.hydrateEvent(eventName, eventgr);
+                    if (logSpecificEvents && eventsToLog.contains(eventName)) {
+                        logger.info("ESP reads GenericRecord and hydrates event " + event);
+                    }
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
                 }).setLocalParallelism(1).setName("Update SourcedEvent with timestamp")
@@ -124,6 +137,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     SourcedEvent<D,K> event = tuple2.f1();
+                    //logger.info("Append to event store: key " + key);
                     eventstore.append(key, event);
                     return tuple2;
                 }).setName("Persist Event to event store")
@@ -131,28 +145,34 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .mapUsingService(materializedViewServiceFactory, (viewMap, tuple2) -> {
                     // TODO: this stage occasionally reports a NPE (no line # info available)
                     SourcedEvent<D,K> event = tuple2.f1();
-                    //logger.info("EventSourcingPipeline updating materialized view for event " + event);
-                    viewMap.executeOnKey(event.getKey(), (EntryProcessor<K,GenericRecord,GenericRecord>) viewEntry -> {
-                        GenericRecord domainObjectGR = viewEntry.getValue();
-                        //K domainObjectKey = viewEntry.getKey(); // NOT NEEDED
-                        D domainObject = null; // OK for events that do the initial DO creation
-                        if (domainObjectGR != null) {
-                            domainObject = hydrationFactory.hydrateDomainObject(domainObjectGR);
-                            //logger.info("  hydrated domain object " + domainObjectGR);
+                    K key = event.getKey();
+                    String eventName = event.getEventName();
+                    if (logSpecificEvents && eventsToLog.contains(eventName)) {
+                        logger.info("ESP event key " + key + " instanceof GRSupport?  " + (key instanceof GenericRecordSupport));
+                    }
+                    if (key instanceof GenericRecordSupport) {
+                        GenericRecord grKey = ((GenericRecordSupport) key).toGenericRecord();
+                        if (logSpecificEvents && eventsToLog.contains(eventName)) {
+                            System.out.println("ESP.updateMV - GR form of key " + grKey);
+                            System.out.println("ESP.updateMV - Entry to update " + viewMap.get(grKey));
                         }
-//                        else {
-//                            logger.info("  null domain object (OK for CREATE type events");
-//                        }
-                        domainObject = event.apply(domainObject);
-                        //logger.info("  domain object after applying event: " + domainObject);
-                        viewEntry.setValue(domainObject.toGenericRecord());
-                        return domainObject.toGenericRecord();
-                    });
+                        IMap grMap = viewMap;
+                        // We can't cast K to GenericRecord to we just strip type info. This is problematic
+                        GenericRecord updated = (GenericRecord) grMap.executeOnKey(grKey, new UpdateViewGREntryProcessor<D, K, E>(event, hydrationFactory));
+                        if (logSpecificEvents && eventsToLog.contains(eventName)) {
+                            System.out.println("Updated MV entry " + updated);
+                        }
+                    } else {
+                        logger.info("EventSourcingPipeline updating materialized view for event " + event);
+                        viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event, hydrationFactory));
+
+                    }
                     return tuple2;
                 }).setName("Update Materialized View")
                 // Broadcast the event to all subscribers
                 .map(tuple2 -> {
                     SourcedEvent<D,K> event = tuple2.f1();
+                    assert event != null;
                     event.publish();
                     return tuple2;
                 }).setName("Publish event to all subscribers")
@@ -160,6 +180,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .mapUsingService(pendingMapServiceFactory, (pendingMap, tuple2) -> {
                     boolean debugRemoval = true;
                     PartitionedSequenceKey<K> key = tuple2.f0();
+                    logger.info("EventSourcingPipeline finished with event, removing from pending map: " + key);
                     SourcedEvent<D,K> event = tuple2.f1(); // used only as return which goes to nop stage
                     if (debugRemoval) {
                         //SourcedEvent<D,K> removed = pendingMap.remove(key);
@@ -174,17 +195,20 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 }).setName("Remove event from pending events")
                 .writeTo(Sinks.mapWithUpdating(completionsMap,
                         tuple -> tuple.f0(),
-                        (completionInfo, tuple) -> {
-                            //System.out.println("Updating " + completionsMapName + " in sink");
-                            if (completionInfo == null) {
-                                logger.warning("No completion info to update for key " + tuple.f0());
+                        (genericCompletionInfo, tuple) -> {
+                            if (genericCompletionInfo == null) {
+                                logger.warning("ESPipeline sink: No completion info to update for key " + tuple.f0());
                                 return null;
                             } else {
-                                completionInfo.markComplete();
-                                return completionInfo;
+                                CompletionInfo ci = new CompletionInfo(genericCompletionInfo);
+                                String eventName = ci.getEvent().getEventName();
+                                if (logSpecificEvents && eventsToLog.contains(eventName)) {
+                                    logger.info("Updating " + completionsMapName + " for " + ci.getEvent().getEventName() + " in EventSourcingPipeline sink");
+                                }
+                                ci.markComplete();
+                                return ci.toGenericRecord();
                             }
-                        })).setName("Update completion info");
-
+                        })).setName("Sink CompletionInfo into Map");
         return p;
     }
 }

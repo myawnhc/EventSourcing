@@ -15,13 +15,10 @@
  * Vestibulum commodo. Ut rhoncus gravida arcu.
  */
 
-package org.hazelcast.eventsourcing.sync;
+package org.hazelcast.eventsourcing.event;
 
-import org.hazelcast.eventsourcing.event.DomainObject;
-import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
-import org.hazelcast.eventsourcing.event.SourcedEvent;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 
-/** Callback used when event handler invoked from non-pipeline code */
-public interface EventCompletionHandler<D extends DomainObject<K>, K, E extends SourcedEvent<D,K> > {
-    void eventProcessingComplete(PartitionedSequenceKey<D> key, E event, CompletionInfo status);
+public interface GenericRecordSupport {
+    public GenericRecord toGenericRecord();
 }

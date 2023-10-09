@@ -19,8 +19,10 @@ package org.hazelcast.eventsourcing.event;
 
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
+import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
 import org.hazelcast.eventsourcing.testobjects.AccountHydrationFactory;
@@ -34,6 +36,9 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 public class EventStoreTests {
 
@@ -65,30 +70,46 @@ public class EventStoreTests {
     void verifyAppend() {
         // OpenAccountEvent is a SourcedEvent
         OpenAccountEvent open1 = new OpenAccountEvent("11111", "Bob", BigDecimal.valueOf(111.22));
-        PartitionedSequenceKey<String> key1 = controller.handleEvent(open1);
+        CompletableFuture<CompletionInfo> future1 = controller.handleEvent(open1, UUID.randomUUID());
 
         OpenAccountEvent open2 = new OpenAccountEvent("22222", "Rick", BigDecimal.valueOf(333.44));
-        PartitionedSequenceKey<String> key2 = controller.handleEvent(open2);
+        CompletableFuture<CompletionInfo> future2 = controller.handleEvent(open2, UUID.randomUUID());
 
         OpenAccountEvent open3 = new OpenAccountEvent("33333", "Jim", BigDecimal.valueOf(555.66));
-        PartitionedSequenceKey<String> key3 = controller.handleEvent(open3);
+        CompletableFuture<CompletionInfo> future3 = controller.handleEvent(open3, UUID.randomUUID());
 
-        // Allow pipeline to finish processing events
+        // Allow pipeline to finish processing events.  (TODO: wait on futures instead of sleeping!)
+//        try {
+//            Thread.sleep(3000);
+//        } catch (InterruptedException e) {
+//            throw new RuntimeException(e);
+//        }
+        String key1, key2, key3;
         try {
-            Thread.sleep(3000);
+            CompletionInfo cinfo1 = future1.get();
+            //GenericRecord eventGR = cinfo1.getEvent();
+            SourcedEvent event1 = cinfo1.getEvent();
+            key1 = (String) event1.getKey();
+
+             key2 = (String) future2.get().getEvent().getKey();
+             key3 = (String) future3.get().getEvent().getKey();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
         }
+
 
         int storeSize = controller.getEventStore().getSize();
         Assertions.assertEquals(3, storeSize);
 
         Set<PartitionedSequenceKey<String>> keySet = controller.getEventStore().getKeys();
         Assertions.assertEquals(3, keySet.size());
-        Assertions.assertTrue(keySet.contains(key1));
-        Assertions.assertTrue(keySet.contains(key2));
-        Assertions.assertTrue(keySet.contains(key3));
-
+        for (PartitionedSequenceKey psk : keySet) {
+            Assertions.assertTrue(psk.getPartitionKey().equals(key1) ||
+                    psk.getPartitionKey().equals(key2) ||
+                    psk.getPartitionKey().equals(key3));
+        }
         controller.getEventStore().clearData();
     }
 }
