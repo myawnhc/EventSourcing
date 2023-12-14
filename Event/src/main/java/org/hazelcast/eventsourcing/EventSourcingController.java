@@ -30,6 +30,7 @@ import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.sync.CompletionTracker;
+import org.hazelcast.eventsourcing.viridiancfg.ConfirmKeyClassVisibility;
 import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
@@ -37,12 +38,12 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.function.BiFunction;
+import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -226,11 +227,17 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             // For Viridian Serverless, we need to programmatically enable the map journal
             // as it cannot be toggled on via the UI.  If map config is already set we will not
             // override it.  (This will likely be unnecessary in a future release)
-            MapConfig pendingMapConfig = controller.getHazelcast().getConfig().getMapConfig("*_PENDING");
-            if (pendingMapConfig == null) {
-                EnableMapJournal enabler = new EnableMapJournal("*_PENDING");
-                ExecutorService executor = controller.getHazelcast().getExecutorService("Executor");
-                executor.submit(enabler);
+            MapConfig pendingMapConfig = null;
+            try {
+                pendingMapConfig = controller.getHazelcast().getConfig().getMapConfig("*_PENDING");
+                if (pendingMapConfig == null) {
+                    EnableMapJournal enabler = new EnableMapJournal("*_PENDING");
+                    ExecutorService executor = controller.getHazelcast().getExecutorService("Executor");
+                    executor.submit(enabler);
+                }
+            } catch (UnsupportedOperationException e) {
+                // Seen in client-server deployments on the client side
+                logger.warning("Unable to programmatically enable map journal on PENDING maps");
             }
             controller.pendingEventsMap = controller.hazelcast.getMap(controller.pendingEventsMapName);
         }
@@ -243,10 +250,16 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             return this;
         }
         private void buildCompletionsMap() {
+            Logger l = Logger.getLogger("com.hazelcast.sql.impl.client");
+            System.out.println("Before " + l.getLevel());
+            l.setLevel(Level.FINEST);
+            System.out.println("After " + l.getLevel());
             controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
             controller.completionsMap.addEntryListener(controller.getCompletionTracker(), true);
             // We don't use this SQL mapping internally but define it to make it friendlier to developers
             controller.completions_mapping_template = controller.completions_mapping_template.replaceAll("\\?", controller.completionMapName);
+            System.out.println("PSK: " + PartitionedSequenceKey.class); // Shows here fine, but SQL mapping says class not found
+            //UserCodeDeploymentConfig ucdcfg = controller.getHazelcast().getConfig().getUserCodeDeploymentConfig()
             controller.getHazelcast().getSql().execute(controller.completions_mapping_template);        }
 
         ///////////////////////
@@ -299,6 +312,10 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     private EventSourcingController(HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
+        ConfirmKeyClassVisibility test = new ConfirmKeyClassVisibility();
+        ExecutorService es = Executors.newSingleThreadExecutor();
+        logger.info("Testing key class visibility at ESC construction");
+        es.submit(test);
     }
 
 
