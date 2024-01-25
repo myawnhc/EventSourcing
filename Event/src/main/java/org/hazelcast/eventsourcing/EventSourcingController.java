@@ -30,7 +30,6 @@ import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.sync.CompletionTracker;
-import org.hazelcast.eventsourcing.viridiancfg.ConfirmKeyClassVisibility;
 import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
@@ -42,8 +41,6 @@ import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
 
@@ -250,17 +247,14 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             return this;
         }
         private void buildCompletionsMap() {
-            Logger l = Logger.getLogger("com.hazelcast.sql.impl.client");
-            System.out.println("Before " + l.getLevel());
-            l.setLevel(Level.FINEST);
-            System.out.println("After " + l.getLevel());
             controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
             controller.completionsMap.addEntryListener(controller.getCompletionTracker(), true);
             // We don't use this SQL mapping internally but define it to make it friendlier to developers
-            controller.completions_mapping_template = controller.completions_mapping_template.replaceAll("\\?", controller.completionMapName);
-            System.out.println("PSK: " + PartitionedSequenceKey.class); // Shows here fine, but SQL mapping says class not found
-            //UserCodeDeploymentConfig ucdcfg = controller.getHazelcast().getConfig().getUserCodeDeploymentConfig()
-            controller.getHazelcast().getSql().execute(controller.completions_mapping_template);        }
+//            controller.completions_mapping_template = controller.completions_mapping_template.replaceAll("\\?", controller.completionMapName);
+//            System.out.println("PSK: " + PartitionedSequenceKey.class); // Shows here fine, but SQL mapping says class not found
+//            //UserCodeDeploymentConfig ucdcfg = controller.getHazelcast().getConfig().getUserCodeDeploymentConfig()
+//            controller.getHazelcast().getSql().execute(controller.completions_mapping_template);
+            }
 
         ///////////////////////
         // Pipeline
@@ -312,10 +306,6 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
     private EventSourcingController(HazelcastInstance hazelcast) {
         this.hazelcast = hazelcast;
-        ConfirmKeyClassVisibility test = new ConfirmKeyClassVisibility();
-        ExecutorService es = Executors.newSingleThreadExecutor();
-        logger.info("Testing key class visibility at ESC construction");
-        es.submit(test);
     }
 
 

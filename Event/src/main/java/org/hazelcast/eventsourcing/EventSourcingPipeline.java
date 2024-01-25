@@ -36,6 +36,7 @@ import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -74,6 +75,14 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
         Pipeline p = createPipeline();
         JobConfig jobConfig = new JobConfig();
         // future: add jars as needed for client-server deployment
+        if (false)
+            logger.info("EventSourcingPipeline skipping dependencies");
+        else {
+            for (URL url : controller.getDependentJars()) {
+                jobConfig.addJar(url);
+                logger.info("EventSourcingPipeline job config adding " + url);
+            }
+        }
         jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
         while (true) {
             try {
