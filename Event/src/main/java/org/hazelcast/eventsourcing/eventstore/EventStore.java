@@ -62,7 +62,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
 
     protected String eventMapName;
     /* Event map's Value is SourcedEvent<D,K> serialized as a compact GenericRecord */
-    transient protected IMap<PartitionedSequenceKey<K>, Object> eventMap;
+    transient protected IMap<PartitionedSequenceKey<K>, GenericRecord> eventMap;
     transient protected SqlService sqlService;
 
 
@@ -105,8 +105,8 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      *               materialized view
      * @return the materialized domain object
      */
-    private D materialize(D startingWith, List<SourcedEvent<D,K>> events) {
-        D materializedObject = startingWith;
+    private GenericRecord materialize(GenericRecord startingWith, List<SourcedEvent<D,K>> events) {
+        GenericRecord materializedObject = startingWith;
         for (SourcedEvent<D,K> event: events) {
             materializedObject = event.apply(materializedObject);
         }
@@ -127,7 +127,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      *                      events with later timestamps will be ignored.
      * @return a domain object reflecting the qualifying Events
      */
-    private D materialize(D startingWith, K keyValue, int count, long upToTimestamp) {
+    private GenericRecord materialize(GenericRecord startingWith, K keyValue, int count, long upToTimestamp) {
         List<SourcedEvent<D,K>> events = getEventsFor(keyValue, count, upToTimestamp);
         System.out.println("Materializing " + keyValue + " with " + events.size() + " events");
         return materialize(startingWith, events);
@@ -142,7 +142,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      * @param keyValue the key value for the domain object's key
      * @return a domain object reflecting all events for the domain object
      */
-    public D materialize(D startingWith, K keyValue) {
+    public GenericRecord materialize(GenericRecord startingWith, K keyValue) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, Long.MAX_VALUE);
     }
 
@@ -155,7 +155,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      *              upToTimestamp will be supplied.
      * @return a domain object reflecting the qualifying Events
      */
-    public D materialize(D startingWith, K keyValue, int count) {
+    public GenericRecord materialize(GenericRecord startingWith, K keyValue, int count) {
         return materialize(startingWith, keyValue, count, Long.MAX_VALUE);
     }
 
@@ -169,7 +169,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      *                      events with later timestamps will be ignored.
      * @return a domain object reflecting the qualifying Events
      */
-    public D materialize (D startingWith, K keyValue, long upToTimestamp) {
+    public GenericRecord materialize (GenericRecord startingWith, K keyValue, long upToTimestamp) {
         return materialize(startingWith, keyValue, Integer.MAX_VALUE, upToTimestamp);
     }
 
@@ -267,7 +267,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
      * event will be added to the event store which summarizes the content of the removed
      * events)
      */
-    public int compact(EventStoreCompactionEvent<D> compactionEvent, D domainObject, K keyValue, double compressionFactor) {
+    public int compact(EventStoreCompactionEvent compactionEvent, GenericRecord domainObject, K keyValue, double compressionFactor) {
         if (compressionFactor >= 1) {
             throw new IllegalArgumentException("Compression Factor must be < 1");
         }
@@ -279,7 +279,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
                 removalCount, Long.MAX_VALUE);
         domainObject = materialize(domainObject, eventsToSummarize);
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(0, keyValue);
-        compactionEvent.initFromDomainObject(domainObject);
+        compactionEvent.initFromGenericRecord(domainObject);
         // Since compaction event isn't processed thru pending -> pipeline, it doesn't get timestamp set
         ((SourcedEvent<D,K>)compactionEvent).setTimestamp(System.currentTimeMillis());
         //compactionEvent.writeAsCheckpoint(domainObject, psk);

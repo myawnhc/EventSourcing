@@ -26,7 +26,7 @@ import java.io.Serializable;
 import java.math.BigDecimal;
 
 public class AccountCompactionEvent extends AccountEvent
-        implements EventStoreCompactionEvent<Account>, Serializable {
+        implements EventStoreCompactionEvent, Serializable {
 
     public static final String QUAL_EVENT_NAME = "AccountService.AccountCompactionEvent";
     public static final String ACCT_NUM = "key";
@@ -65,19 +65,20 @@ public class AccountCompactionEvent extends AccountEvent
     }
 
     @Override
-    public Account apply(Account account) {
-        account.setAccountNumber(accountNumber);
-        account.setAccountName(accountName);
-        account.setBalance(balance);
-        return account;
+    public GenericRecord apply(GenericRecord account) {
+        // Assuming no change to acct num, acct name
+        //this.accountNumber = account.getString(Account.FIELD_ACCT_NUM);
+        //this.accountName = account.getString(Account.FIELD_ACCT_NAME);
+        this.balance = this.balance.add(account.getDecimal(Account.FIELD_BALANCE));
+        return this.toGenericRecord();
     }
 
     @Override
-    public void initFromDomainObject(Account domainObject) {
-        this.accountNumber = domainObject.getAccountNumber();
+    public void initFromGenericRecord(GenericRecord domainObject) {
+        this.accountNumber = domainObject.getString(Account.FIELD_ACCT_NUM);
         this.key = accountNumber; // Required and easy to miss - maybe require on constructor instead?
-        this.accountName = domainObject.getAccountName();
-        this.balance = domainObject.getBalance();
+        this.accountName = domainObject.getString(Account.FIELD_ACCT_NAME);
+        this.balance = domainObject.getDecimal(Account.FIELD_BALANCE);
     }
 
     @Override

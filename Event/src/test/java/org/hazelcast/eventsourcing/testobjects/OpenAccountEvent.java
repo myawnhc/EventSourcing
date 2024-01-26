@@ -62,15 +62,22 @@ public class OpenAccountEvent extends AccountEvent {
     }
 
     @Override
-    public Account apply(Account account) {
+    public GenericRecord apply(GenericRecord account) {
         // When called from pipeline we will be passed null as there is no
         // entry for the account found when doing initial lookup
-        if (account == null)
-            account = new Account();
-        // Since it's a new account we just set values rather than update existing object
-        account.setAccountNumber(key);
-        account.setAccountName(accountName);
-        account.setBalance(initialBalance);
+        if (account == null) {
+            account = GenericRecordBuilder.compact("AccountService.account")
+                    .setString(Account.FIELD_ACCT_NUM, key)
+                    .setString(Account.FIELD_ACCT_NAME, accountName)
+                    .setDecimal(Account.FIELD_BALANCE, initialBalance)
+                    .build();
+        } else {
+            account = account.newBuilderWithClone()
+                    .setString(Account.FIELD_ACCT_NUM, key)
+                    .setString(Account.FIELD_ACCT_NAME, accountName)
+                    .setDecimal(Account.FIELD_BALANCE, initialBalance)
+                    .build();
+        }
         return account;
     }
 

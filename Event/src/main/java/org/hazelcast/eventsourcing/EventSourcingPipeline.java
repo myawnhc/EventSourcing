@@ -29,7 +29,6 @@ import com.hazelcast.map.IMap;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
-import org.hazelcast.eventsourcing.event.GenericRecordSupport;
 import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
@@ -156,26 +155,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     SourcedEvent<D,K> event = tuple2.f1();
                     K key = event.getKey();
                     String eventName = event.getEventName();
-                    if (logSpecificEvents && eventsToLog.contains(eventName)) {
-                        logger.info("ESP event key " + key + " instanceof GRSupport?  " + (key instanceof GenericRecordSupport));
-                    }
-                    if (key instanceof GenericRecordSupport) {
-                        GenericRecord grKey = ((GenericRecordSupport) key).toGenericRecord();
-                        if (logSpecificEvents && eventsToLog.contains(eventName)) {
-                            System.out.println("ESP.updateMV - GR form of key " + grKey);
-                            System.out.println("ESP.updateMV - Entry to update " + viewMap.get(grKey));
-                        }
-                        IMap grMap = viewMap;
-                        // We can't cast K to GenericRecord to we just strip type info. This is problematic
-                        GenericRecord updated = (GenericRecord) grMap.executeOnKey(grKey, new UpdateViewGREntryProcessor<D, K, E>(event, hydrationFactory));
-                        if (logSpecificEvents && eventsToLog.contains(eventName)) {
-                            System.out.println("Updated MV entry " + updated);
-                        }
-                    } else {
-                        logger.info("EventSourcingPipeline updating materialized view for event " + event);
-                        viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event, hydrationFactory));
-
-                    }
+                    logger.info("EventSourcingPipeline updating materialized view for event " + event);
+                    viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event, hydrationFactory));
                     return tuple2;
                 }).setName("Update Materialized View")
                 // Broadcast the event to all subscribers

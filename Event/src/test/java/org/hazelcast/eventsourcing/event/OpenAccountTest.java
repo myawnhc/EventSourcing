@@ -19,6 +19,7 @@ package org.hazelcast.eventsourcing.event;
 
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
@@ -86,9 +87,9 @@ public class OpenAccountTest {
 
         // Get a materialized view that reflects the event
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
-        Account a = es.materialize(new Account(), "12345");
+        GenericRecord a = es.materialize(new Account().toGenericRecord(), "12345");
 
-        Assertions.assertEquals(BigDecimal.valueOf(777.22), a.getBalance());
+        Assertions.assertEquals(BigDecimal.valueOf(777.22), a.getDecimal(Account.FIELD_BALANCE));
         Assertions.assertEquals(1, consumer.getEventCount());
 
         submgr.unsubscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);

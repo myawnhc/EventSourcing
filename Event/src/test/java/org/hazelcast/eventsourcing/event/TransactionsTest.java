@@ -19,6 +19,7 @@ package org.hazelcast.eventsourcing.event;
 
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
@@ -144,7 +145,7 @@ public class TransactionsTest {
 
         System.out.println("Waiting for pipeline to clear ...");
         try {
-            Thread.sleep(5000);
+            Thread.sleep(10000);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -152,9 +153,9 @@ public class TransactionsTest {
         // Get a materialized view that reflects the event.  Will fail if events
         // are still making their way through the pipeline, hence the delay above.
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
-        Account a = es.materialize(new Account(), TEST_ACCOUNT);
+        GenericRecord a = es.materialize(new Account().toGenericRecord(), TEST_ACCOUNT);
 
-        Assertions.assertEquals(expectedBalance, a.getBalance());
+        Assertions.assertEquals(expectedBalance, a.getDecimal(Account.FIELD_BALANCE));
         Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount());
 
         submgr.unsubscribe(OpenAccountEvent.QUAL_EVENT_NAME, consumer);
@@ -198,15 +199,15 @@ public class TransactionsTest {
 
         // Get a materialized view that reflects the event
         EventStore<Account, String, AccountEvent> es = controller.getEventStore();
-        Account a = es.materialize(new Account(), TEST_ACCOUNT);
+        GenericRecord a = es.materialize(new Account().toGenericRecord(), TEST_ACCOUNT);
 
-        Assertions.assertEquals(expectedBalance, a.getBalance());
-        Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount());
+        Assertions.assertEquals(expectedBalance, a.getDecimal(Account.FIELD_BALANCE), "Expected balance before compaction");
+        Assertions.assertEquals(TEST_EVENT_COUNT+1, consumer.getEventCount(), "Event count before compaction wrong");
 
-        es.compact(new AccountCompactionEvent(), new Account(), "67890", 0.5);
-        Account a2 = es.materialize(new Account(), TEST_ACCOUNT);
+        es.compact(new AccountCompactionEvent(), new Account().toGenericRecord(), "67890", 0.5);
+        GenericRecord a2 = es.materialize(new Account().toGenericRecord(), TEST_ACCOUNT);
 
-        Assertions.assertEquals(expectedBalance, a2.getBalance());
+        Assertions.assertEquals(expectedBalance, a2.getDecimal(Account.FIELD_BALANCE), "Expected balance after compaction");
         // TODO: don't want messaging count here, but actual count ... haven't exposed
         //  getEventsFor but might need to for this text.
         //Assertions.assertEquals(51, consumer.getEventCount());

@@ -17,9 +17,11 @@
 
 package org.hazelcast.eventsourcing.eventstore;
 
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+
 /** Interface to be implemented by SourcedEvent subclass that handles compaction for an
   * EventStore
   */
-public interface EventStoreCompactionEvent<D> {
-    void initFromDomainObject(D domainObject);
+public interface EventStoreCompactionEvent {
+    void initFromGenericRecord(GenericRecord domainObject);
 }

@@ -17,7 +17,6 @@
 
 package org.hazelcast.eventsourcing.event;
 
-import com.hazelcast.core.HazelcastJsonValue;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 
@@ -43,7 +42,7 @@ import java.util.function.UnaryOperator;
  * @param <D> the DamainObject class to which this event can be applied
  * @param <K> the key class of the DomainObject (typically but not necessarily a String)
  */
-public abstract class SourcedEvent<D extends DomainObject<K>, K> implements UnaryOperator<D>, Serializable {
+public abstract class SourcedEvent<D extends DomainObject<K>, K> implements UnaryOperator<GenericRecord>, Serializable {
 
     protected K key;
     public K getKey() { return key; }

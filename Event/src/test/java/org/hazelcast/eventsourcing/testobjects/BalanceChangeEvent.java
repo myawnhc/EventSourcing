@@ -19,6 +19,7 @@ package org.hazelcast.eventsourcing.testobjects;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import com.hazelcast.sql.SqlRow;
+
 import java.math.BigDecimal;
 
 public class BalanceChangeEvent extends AccountEvent {
@@ -50,8 +51,9 @@ public class BalanceChangeEvent extends AccountEvent {
     public BigDecimal getBalanceChange() { return balanceChange; }
 
     @Override
-    public Account apply(Account account) {
-        account.setBalance(account.getBalance().add(balanceChange));
+    public GenericRecord apply(GenericRecord account) {
+        BigDecimal newBalance = account.getDecimal(Account.FIELD_BALANCE).add(balanceChange);
+        account = account.newBuilderWithClone().setDecimal(Account.FIELD_BALANCE, newBalance).build();
         return account;
     }
 
