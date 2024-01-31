@@ -27,7 +27,7 @@ import java.util.UUID;
 
 public class CompletionInfo implements Serializable {
 
-    public enum Status { INCOMPLETE, COMPLETED_OK, TIMED_OUT, HAD_ERROR }
+    public enum Status { INCOMPLETE, PIPELINE_ENTRY, PIPELINE_EXIT, COMPLETED_OK, TIMED_OUT, HAD_ERROR }
 
     private static HydrationFactory hydrationFactory;
 
@@ -66,6 +66,14 @@ public class CompletionInfo implements Serializable {
     public void markComplete() {
         status = Status.COMPLETED_OK;
         completionTime = System.currentTimeMillis();
+    }
+
+    public void pipelineEntry() {
+        status = Status.PIPELINE_ENTRY;
+    }
+
+    public void pipelineExit() {
+        status = Status.PIPELINE_EXIT;
     }
 
     public void markFailed(Throwable t) {

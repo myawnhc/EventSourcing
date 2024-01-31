@@ -53,7 +53,7 @@ public class CompletionTracker implements EntryUpdatedListener<PartitionedSequen
             if (future == null) {
                 System.out.println("No future found for " + key);
             } else {
-                logger.info("CompletionTracker entryUpdated, marking future complete " + info);
+                //logger.info("CompletionTracker entryUpdated, marking future complete " + info);
                 future.complete(info);
                 futures.remove(key);
             }

@@ -48,19 +48,11 @@ public class UpdateViewEntryProcessor<D extends DomainObject<K>, K extends Compa
     @Override
     public synchronized GenericRecord process(Map.Entry<K, GenericRecord> viewEntry) {
         GenericRecord domainObject = viewEntry.getValue();
-        //String tid = Thread.currentThread().getId() + ": " + Thread.currentThread().getName();
-        //K domainObjectKey = viewEntry.getKey(); // NOT NEEDED other than logging
-//        D domainObject = null; // OK for events that do the initial DO creation
-//        if (domainObjectGR != null) {
-//            domainObject = hydrationFactory.hydrateDomainObject(domainObjectGR);
-//            //logger.info("Hydrated " + domainObjectGR + " -> " + domainObject);
-//            if (domainObject == null) {
-//                logger.severe("Unable to hydrate domain object from " + domainObjectGR);
-//                return null;
-//            }
-//        }
+        // debugging - OK for 'Open' event, but not for BalanceChange events or Merker
+        if (domainObject == null) {
+            logger.warning("Null DO value for materialized view update: " + viewEntry + " event " + event );
+        }
         GenericRecord updatedDO = event.apply(domainObject);
-        //GenericRecord gr = domainObject.toGenericRecord();
         viewEntry.setValue(updatedDO);
         return updatedDO;
     }

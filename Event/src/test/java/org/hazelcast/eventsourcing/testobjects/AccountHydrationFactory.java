@@ -54,20 +54,10 @@ public class AccountHydrationFactory implements HydrationFactory<Account, String
         return mapping_template;
     }
 
-    // TODO: may have this take SqlRow rather than GenericRecord ...
-    //   may then just pass it to the appropriate class' SqlRow constructor
-    //   (an implementation choice - others may chose to fully hydrate here
-    //    rather than hand it off to the event class)
     @Override
     public Account hydrateDomainObject(GenericRecord data) {
         return new Account(data);
     }
-
-//    @Override
-//    public Account hydrateDomainObject(String doName, SqlRow data) {
-//        //return null;
-//        return new Account(data);
-//    }
 
     @Override
     public AccountEvent hydrateEvent(String eventName, SqlRow data) {
@@ -78,6 +68,8 @@ public class AccountHydrationFactory implements HydrationFactory<Account, String
                 return new BalanceChangeEvent(data);
             case "AccountService.AccountCompactionEvent":
                 return new AccountCompactionEvent(data);
+            case "AccountService.AccountMarkerEvent":
+                return new AccountMarkerEvent(data);
             default:
                 throw new IllegalArgumentException("bad eventName:" + eventName);
 
@@ -93,9 +85,10 @@ public class AccountHydrationFactory implements HydrationFactory<Account, String
                 return new BalanceChangeEvent(data);
             case "AccountService.AccountCompactionEvent":
                 return new AccountCompactionEvent(data);
+            case "AccountService.AccountMarkerEvent":
+                return new AccountMarkerEvent(data);
             default:
                 throw new IllegalArgumentException("bad eventName:" + eventName);
-
         }
     }
 }

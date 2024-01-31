@@ -69,7 +69,13 @@ public class AccountCompactionEvent extends AccountEvent
         // Assuming no change to acct num, acct name
         //this.accountNumber = account.getString(Account.FIELD_ACCT_NUM);
         //this.accountName = account.getString(Account.FIELD_ACCT_NAME);
-        this.balance = this.balance.add(account.getDecimal(Account.FIELD_BALANCE));
+        BigDecimal previousBalance = account.getDecimal(Account.FIELD_BALANCE);
+        if (previousBalance != null)
+            this.balance = this.balance.add(previousBalance);
+        else {
+            // Seems this is OK since we're inserting at position 0
+            //System.out.println("Null account balance in AccountCompactionEvent.apply!");
+        }
         return this.toGenericRecord();
     }
 

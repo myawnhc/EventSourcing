@@ -40,18 +40,18 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
     private static final Logger logger = Logger.getLogger(IMapSubMgr.class.getName());
 
     // IMap not serializable and SubMgr is used in pipeline creation -- so leaving
-    // template mapping in place but removing actual journal declaration
-    //private IMap<PartitionedSequenceKey, E> eventJournal;
-    private String eventJournalName;
-
-    private String eventJournal_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
-            "TYPE IMap\n" +
-            "OPTIONS (\n" +
-            "  'keyFormat' = 'java',\n" +
-            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
-            "  'valueFormat' = 'java',\n" +
-            "  'valueJavaClass' = 'org.hazelcast.eventsourcing.sync.CompletionInfo'\n" +
-            ")";
+//    // template mapping in place but removing actual journal declaration
+//    //private IMap<PartitionedSequenceKey, E> eventJournal;
+//    private String eventJournalName;
+//
+//    private String eventJournal_mapping_template = "CREATE MAPPING IF NOT EXISTS \"?\"\n" +
+//            "TYPE IMap\n" +
+//            "OPTIONS (\n" +
+//            "  'keyFormat' = 'java',\n" +
+//            "  'keyJavaClass' = 'org.hazelcast.eventsourcing.event.PartitionedSequenceKey',\n" +
+//            "  'valueFormat' = 'java',\n" +
+//            "  'valueJavaClass' = 'org.hazelcast.eventsourcing.sync.CompletionInfo'\n" +
+//            ")";
 
 
     // Could use a record for this but would require JDK version > 11 (max supported by Viridian now)
@@ -80,9 +80,9 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
     }
 
     public IMapSubMgr(String baseEventClassName) {
-        eventJournalName = mapNameFromEventName(baseEventClassName);
+//        eventJournalName = mapNameFromEventName(baseEventClassName);
         //eventJournal = getHazelcastInstance().getMap(eventJournalName);
-        eventJournal_mapping_template = eventJournal_mapping_template.replaceAll("\\?", eventJournalName);
+//        eventJournal_mapping_template = eventJournal_mapping_template.replaceAll("\\?", eventJournalName);
         // NO - Base class HZ not initialized when we construct this instance ..
         //getHazelcastInstance().getSql().execute(eventJournal_mapping_template);
     }
@@ -132,7 +132,7 @@ public class IMapSubMgr <E extends SourcedEvent> extends SubscriptionManager<E> 
         IMap<PartitionedSequenceKey, E> map = hz.getMap(mapName);
         long sequence = hz.getPNCounter(eventName).getAndIncrement();
         PartitionedSequenceKey key = new PartitionedSequenceKey(sequence, event.getKey());
-        //logger.info("IMapSubMgr publishes :" + eventName + ": " + event + " to " + mapName);
+        //logger.info("IMapSubMgr publishes :" + eventName + ": " + key + " to " + mapName);
         map.put(key, event);
     }
 

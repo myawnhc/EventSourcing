@@ -30,6 +30,7 @@ import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
 import org.hazelcast.eventsourcing.event.HydrationFactory;
+import org.hazelcast.eventsourcing.event.MarkerEvent;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
@@ -55,6 +56,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
     private final EventSourcingController<D,K,E> controller;
     private final String pendingEventsMapName;
     private static final Logger logger = Logger.getLogger(EventSourcingPipeline.class.getName());
+    // TODO: allow enabling verboseLogging through command line switch rather than recompile!
+    private static final boolean verboseLogging = false;
 
     private boolean logSpecificEvents = false;
     private List<String> eventsToLog = new ArrayList<>();
@@ -73,14 +76,10 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
     public Job call() {
         Pipeline p = createPipeline();
         JobConfig jobConfig = new JobConfig();
-        // future: add jars as needed for client-server deployment
-        if (false)
-            logger.info("EventSourcingPipeline skipping dependencies");
-        else {
-            for (URL url : controller.getDependentJars()) {
-                jobConfig.addJar(url);
+        for (URL url : controller.getDependentJars()) {
+            jobConfig.addJar(url);
+            if (verboseLogging)
                 logger.info("EventSourcingPipeline job config adding " + url);
-            }
         }
         jobConfig.setName("EventSourcing Pipeline for " + controller.getDomainObjectName());
         while (true) {
@@ -90,6 +89,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 // Seen: com.hazelcast.spi.exception.RetryableHazelcastException:
                 // Cannot submit job with name '<jobname>' before the master node initializes job coordination service's state
                 logger.warning("Retrying job submission due to retryable exception");
+            } catch (Throwable t) {
+                t.printStackTrace();
             }
         }
     }
@@ -131,16 +132,21 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     PartitionedSequenceKey<K> psk = (PartitionedSequenceKey<K>) pendingEvent.getKey();
                     //logger.info("EventSourcingPipeline received pendingEvent with PSK(" + psk.getSequence() + "," + psk.getPartitionKey() + ")");
                     //SourcedEvent<D,K> event = (SourcedEvent<D,K>) pendingEvent.getValue();
-                    logger.info("EventSourcePipeline entry with event " + pendingEvent);
+                    if (verboseLogging)
+                        logger.info("EventSourcePipeline entry with event " + pendingEvent);
                     GenericRecord eventgr = (GenericRecord) pendingEvent.getValue();
                     String eventName = eventgr.getString("eventName");
                     SourcedEvent<D,K> event = hydrationFactory.hydrateEvent(eventName, eventgr);
                     if (logSpecificEvents && eventsToLog.contains(eventName)) {
                         logger.info("ESP reads GenericRecord and hydrates event " + event);
                     }
+                    if (event instanceof MarkerEvent) {
+                        MarkerEvent me = (MarkerEvent) event;
+                        me.pipelineEntry();
+                    }
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
-                }).setLocalParallelism(1).setName("Update SourcedEvent with timestamp")
+                }).setName("Update SourcedEvent with timestamp")
                 // Append to event store
                 .mapUsingService(eventStoreServiceFactory, (eventstore, tuple2) -> {
                     PartitionedSequenceKey<K> key = tuple2.f0();
@@ -151,11 +157,11 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 }).setName("Persist Event to event store")
                 // Update materialized view (using EntryProcessor)
                 .mapUsingService(materializedViewServiceFactory, (viewMap, tuple2) -> {
-                    // TODO: this stage occasionally reports a NPE (no line # info available)
                     SourcedEvent<D,K> event = tuple2.f1();
                     K key = event.getKey();
-                    String eventName = event.getEventName();
-                    logger.info("EventSourcingPipeline updating materialized view for event " + event);
+                    //String eventName = event.getEventName();
+                    if (verboseLogging)
+                        logger.info("EventSourcingPipeline updating materialized view for event " + event);
                     viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event, hydrationFactory));
                     return tuple2;
                 }).setName("Update Materialized View")
@@ -170,7 +176,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 .mapUsingService(pendingMapServiceFactory, (pendingMap, tuple2) -> {
                     boolean debugRemoval = true;
                     PartitionedSequenceKey<K> key = tuple2.f0();
-                    logger.info("EventSourcingPipeline finished with event, removing from pending map: " + key);
+                    if (verboseLogging)
+                        logger.info("EventSourcingPipeline finished with event, removing from pending map: " + key);
                     SourcedEvent<D,K> event = tuple2.f1(); // used only as return which goes to nop stage
                     if (debugRemoval) {
                         //SourcedEvent<D,K> removed = pendingMap.remove(key);
@@ -180,6 +187,9 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                         }
                     } else {
                         pendingMap.delete(key);
+                    }
+                    if (event instanceof MarkerEvent) {
+                        ((MarkerEvent) event).pipelineExit();
                     }
                     return tuple2;
                 }).setName("Remove event from pending events")

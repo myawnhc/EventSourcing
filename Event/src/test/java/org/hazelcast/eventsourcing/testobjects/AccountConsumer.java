@@ -22,13 +22,36 @@ import org.hazelcast.eventsourcing.pubsub.Consumer;
 public class AccountConsumer implements Consumer<AccountEvent> {
 
     private int eventsReceived;
+
+    // While debugging missing items, breaking them down ...
+    private int openEvents = 0;
+    private int balanceChangeEvents = 0;
+    private int compactionEvents = 0;
+    private int markerEvents = 0;
+
     @Override
-    public void onEvent(AccountEvent eventMessage) {
+    public synchronized void onEvent(AccountEvent eventMessage) {
+        // Can miscount events if unsynchronized
+        if (eventMessage.getEventName().contains("OpenAccountEvent"))
+            openEvents++;
+        else if (eventMessage.getEventName().contains("BalanceChangeEvent"))
+            balanceChangeEvents++;
+        else if (eventMessage.getEventName().contains("AccountCompactionEvent"))
+            compactionEvents++;
+        else if (eventMessage.getEventName().contains("AccountMarkerEvent"))
+            markerEvents++;
         //System.out.println("Received event: " + eventMessage + " in consumer " + this);
         eventsReceived++;
     }
 
     public int getEventCount() {
+        System.out.println("--- " + openEvents + " open events");
+        System.out.println("--- " + balanceChangeEvents + " balance change events");
+        if (compactionEvents > 0)
+            System.out.println("--- " + compactionEvents + " compaction events");
+        if (markerEvents > 0)
+            System.out.println("--- " + markerEvents + " marker events");
+
         return eventsReceived;
     }
 }

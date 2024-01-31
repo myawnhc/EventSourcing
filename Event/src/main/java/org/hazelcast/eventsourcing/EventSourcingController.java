@@ -21,6 +21,8 @@ import com.hazelcast.config.MapConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.jet.Job;
+import com.hazelcast.jet.JobStatusEvent;
+import com.hazelcast.jet.JobStatusListener;
 import com.hazelcast.map.IMap;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.event.DomainObject;
@@ -262,6 +264,15 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         private void startPipelineJob() {
             EventSourcingPipeline<D,K,E> esp = new EventSourcingPipeline<>(controller);
             controller.pipelineJob = esp.call();
+            controller.pipelineJob.addStatusListener(new JobStatusListener() {
+                @Override
+                public void jobStatusChanged(JobStatusEvent jobStatusEvent) {
+                    String description = jobStatusEvent.getDescription();
+                    if (description != null && !description.equals("Cancel"))
+                        logger.info("Job status change: " + jobStatusEvent.getNewStatus().toString() +
+                                "\n\tStatus description: " + jobStatusEvent.getDescription());
+                }
+            });
         }
 
         // Dependencies of pipeline

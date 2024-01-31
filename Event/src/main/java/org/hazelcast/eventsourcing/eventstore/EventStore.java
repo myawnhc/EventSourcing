@@ -181,6 +181,8 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         // needs to the real table name to verify column names, etc.
         String selectQuery = "select * from " + eventMapName +
                 " WHERE CAST(doKey AS VARCHAR) = ? ORDER BY sequence";
+        if (count > 0 && count != Integer.MAX_VALUE)
+            selectQuery = selectQuery + " LIMIT " + count;
         SqlStatement statement2 = new SqlStatement(selectQuery)
                 .setParameters(List.of(keyValue));
         //logger.info("Select Events Query: " + statement2);
@@ -277,6 +279,7 @@ public class EventStore<D extends DomainObject<K>, K, E extends SourcedEvent<D,K
         if (removalCount < 1) return 0;
         List<SourcedEvent<D,K>> eventsToSummarize = getEventsFor(keyValue,
                 removalCount, Long.MAX_VALUE);
+        logger.info("  Will summarize " + eventsToSummarize.size() + " events "); // Should == removal but is full content!
         domainObject = materialize(domainObject, eventsToSummarize);
         PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(0, keyValue);
         compactionEvent.initFromGenericRecord(domainObject);
