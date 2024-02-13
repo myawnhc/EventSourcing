@@ -19,7 +19,6 @@ package org.hazelcast.eventsourcing.sync;
 
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
-import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
@@ -29,25 +28,23 @@ public class CompletionInfo implements Serializable {
 
     public enum Status { INCOMPLETE, PIPELINE_ENTRY, PIPELINE_EXIT, COMPLETED_OK, TIMED_OUT, HAD_ERROR }
 
-    private static HydrationFactory hydrationFactory;
-
     public Status status;
     public long startTime;
     public long completionTime = -1;
     public Throwable error;
 
     private UUID uuid;
-    public SourcedEvent event;
+    private GenericRecord eventAsGR;
+    private String eventName;
+    private String eventKey;
 
-    public static void setHydrationFactory(HydrationFactory hf) {
-        hydrationFactory = hf;
-    }
-
-    public CompletionInfo(SourcedEvent event, UUID identifier) {
+    public CompletionInfo(GenericRecord event, UUID identifier) {
         status = Status.INCOMPLETE;
         startTime = System.currentTimeMillis();
         this.uuid = identifier;
-        this.event = event;
+        this.eventAsGR = event;
+        this.eventName = event.getString(SourcedEvent.EVENT_NAME);
+        this.eventKey = event.getString(SourcedEvent.EVENT_KEY);
     }
 
     public CompletionInfo(GenericRecord data) {
@@ -55,12 +52,9 @@ public class CompletionInfo implements Serializable {
         this.uuid = UUID.fromString(data.getString("uuid"));
         this.startTime = data.getInt64("startTime");
         this.completionTime = data.getInt64("completionTime");
-        GenericRecord gr = data.getGenericRecord("event");
-        String eventName = gr.getString(SourcedEvent.EVENT_NAME);
-        if (hydrationFactory == null)
-            throw new IllegalStateException("CompletionInfo: HydrationFactory unset");
-        else
-            this.event = hydrationFactory.hydrateEvent(eventName, gr);
+        this.eventAsGR = data.getGenericRecord("event");
+        this.eventName = eventAsGR.getString("eventName");
+        this.eventKey = eventAsGR.getString("key");
     }
 
     public void markComplete() {
@@ -91,17 +85,18 @@ public class CompletionInfo implements Serializable {
         return uuid;
     }
 
-    public SourcedEvent getEvent() {
-        return event;
+    public GenericRecord getEvent() {
+        return eventAsGR;
     }
+    public String getEventName() { return eventName; }
+
+    public String getEventKey() { return eventKey; }
 
     @Override
     public String toString() {
         return "CompletionInfo " +
-                //event.getString(SourcedEvent.EVENT_NAME) + " " +
-                event.getEventName() + " " +
-                //event.getString("key") + " " +
-                event.getKey() + " " +
+                eventName + " " +
+                eventKey + " " +
                 status.name();
     }
 
@@ -111,7 +106,7 @@ public class CompletionInfo implements Serializable {
                 .setString("uuid", uuid.toString())
                 .setInt64("startTime", startTime)
                 .setInt64("completionTime", completionTime)
-                .setGenericRecord("event", event.toGenericRecord())
+                .setGenericRecord("event", eventAsGR)
                 // Error, if any, will not be serialized.  Maybe capture just the message?
                 .build();
         return gr;

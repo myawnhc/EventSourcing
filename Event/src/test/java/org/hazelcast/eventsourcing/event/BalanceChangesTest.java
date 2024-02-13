@@ -49,7 +49,10 @@ public class BalanceChangesTest extends TransactionsTestBase {
         CompletableFuture<CompletionInfo> openFuture = controller.handleEvent(open, UUID.randomUUID());
         System.out.println("Waiting up to 5 seconds for open account success ...");
         try {
-            CompletionInfo openInfo = openFuture.get(5, TimeUnit.SECONDS);
+            // Com
+            CompletionInfo openInfo = openFuture.toCompletableFuture().get(5, TimeUnit.SECONDS);
+            //CompletionInfo openInfo = openFuture.getA(5, TimeUnit.SECONDS);
+
             if (openInfo.status != CompletionInfo.Status.COMPLETED_OK) {
                 Assertions.fail("Open account failed " + openInfo.status);
             }

@@ -43,28 +43,28 @@
                 <version>0.43.4</version>
 
                 <configuration>
-                    <images>
-                        <image>
-                            <name>msf/hz-esf</name>
-                            <!--
-                            <build>
-                                <contextDir>${project.basedir}</contextDir>
-                                <args>
-                                    <JAR_FILE>${project.artifactId}-${project.version}-with-dependencies.jar</JAR_FILE>
-                                </args>
-                            </build>
-                            -->
-                        </image>
-                    </images>
+<!--                    <images>-->
+<!--                        <image>-->
+<!--                            <name>msf/hz-esf</name>-->
+<!--                            &lt;!&ndash;-->
+<!--                            <build>-->
+<!--                                <contextDir>${project.basedir}</contextDir>-->
+<!--                                <args>-->
+<!--                                    <JAR_FILE>${project.artifactId}-${project.version}-with-dependencies.jar</JAR_FILE>-->
+<!--                                </args>-->
+<!--                            </build>-->
+<!--                            &ndash;&gt;-->
+<!--                        </image>-->
+<!--                    </images>-->
                 </configuration>
                 <executions>
-                    <execution>
-                        <phase>install</phase>
-                        <id>default</id>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                    </execution>
+<!--                    <execution>-->
+<!--                        <phase>install</phase>-->
+<!--                        <id>default</id>-->
+<!--                        <goals>-->
+<!--                            <goal>build</goal>-->
+<!--                        </goals>-->
+<!--                    </execution>-->
                 </executions>
             </plugin>
         </plugins>

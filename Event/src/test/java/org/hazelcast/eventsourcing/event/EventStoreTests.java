@@ -19,9 +19,7 @@ package org.hazelcast.eventsourcing.event;
 
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.EventSourcingController;
-import org.hazelcast.eventsourcing.pubsub.SubscriptionManager;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
 import org.hazelcast.eventsourcing.testobjects.Account;
 import org.hazelcast.eventsourcing.testobjects.AccountEvent;
@@ -78,27 +76,16 @@ public class EventStoreTests {
         OpenAccountEvent open3 = new OpenAccountEvent("33333", "Jim", BigDecimal.valueOf(555.66));
         CompletableFuture<CompletionInfo> future3 = controller.handleEvent(open3, UUID.randomUUID());
 
-        // Allow pipeline to finish processing events.  (TODO: wait on futures instead of sleeping!)
-//        try {
-//            Thread.sleep(3000);
-//        } catch (InterruptedException e) {
-//            throw new RuntimeException(e);
-//        }
         String key1, key2, key3;
         try {
-            CompletionInfo cinfo1 = future1.get();
-            //GenericRecord eventGR = cinfo1.getEvent();
-            SourcedEvent event1 = cinfo1.getEvent();
-            key1 = (String) event1.getKey();
-
-             key2 = (String) future2.get().getEvent().getKey();
-             key3 = (String) future3.get().getEvent().getKey();
+            key1 = future1.get().getEventKey();
+            key2 = future2.get().getEventKey();
+            key3 = future3.get().getEventKey();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
         }
-
 
         int storeSize = controller.getEventStore().getSize();
         Assertions.assertEquals(3, storeSize);

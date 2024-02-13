@@ -123,7 +123,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
 
         Pipeline p = Pipeline.create();
         p.readFrom(Sources.mapJournal(pendingEventsMapName, JournalInitialPosition.START_FROM_OLDEST))
-                .withoutTimestamps()
+                .withIngestionTimestamps()
                 // Update SourcedEvent with timestamp.  Forcing local parallelism to 1 for this
                 // stage as otherwise we may receive events out of order; in most cases this is
                 // OK but in a few cases, like account transaction ahead of account being opened,
@@ -141,8 +141,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                         logger.info("ESP reads GenericRecord and hydrates event " + event);
                     }
                     if (event instanceof MarkerEvent) {
-                        MarkerEvent me = (MarkerEvent) event;
-                        me.pipelineEntry();
+                        ((MarkerEvent) event).pipelineEntry();
                     }
                     event.setTimestamp(System.currentTimeMillis());
                     return tuple2(psk, event);
@@ -162,7 +161,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     //String eventName = event.getEventName();
                     if (verboseLogging)
                         logger.info("EventSourcingPipeline updating materialized view for event " + event);
-                    viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event, hydrationFactory));
+                    viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event));
                     return tuple2;
                 }).setName("Update Materialized View")
                 // Broadcast the event to all subscribers
@@ -174,24 +173,17 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 }).setName("Publish event to all subscribers")
                 // Delete event from the pending events map
                 .mapUsingService(pendingMapServiceFactory, (pendingMap, tuple2) -> {
-                    boolean debugRemoval = true;
                     PartitionedSequenceKey<K> key = tuple2.f0();
                     if (verboseLogging)
                         logger.info("EventSourcingPipeline finished with event, removing from pending map: " + key);
-                    SourcedEvent<D,K> event = tuple2.f1(); // used only as return which goes to nop stage
-                    if (debugRemoval) {
-                        //SourcedEvent<D,K> removed = pendingMap.remove(key);
-                        GenericRecord removed = pendingMap.remove(key);
-                        if (removed == null) {
-                            logger.warning("Failed to remove pending event with key " + key);
-                        }
-                    } else {
-                        pendingMap.delete(key);
-                    }
+                    SourcedEvent<D,K> event = tuple2.f1();
+                    pendingMap.delete(key);
                     if (event instanceof MarkerEvent) {
                         ((MarkerEvent) event).pipelineExit();
                     }
-                    return tuple2;
+                    //return tuple2;
+                    GenericRecord eventAsGR = tuple2.f1().toGenericRecord();
+                    return tuple2(key, eventAsGR); // completion info expects generic now, not sourced event
                 }).setName("Remove event from pending events")
                 .writeTo(Sinks.mapWithUpdating(completionsMap,
                         tuple -> tuple.f0(),
@@ -201,9 +193,9 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                                 return null;
                             } else {
                                 CompletionInfo ci = new CompletionInfo(genericCompletionInfo);
-                                String eventName = ci.getEvent().getEventName();
+                                String eventName = ci.getEventName();
                                 if (logSpecificEvents && eventsToLog.contains(eventName)) {
-                                    logger.info("Updating " + completionsMapName + " for " + ci.getEvent().getEventName() + " in EventSourcingPipeline sink");
+                                    logger.info("Updating " + completionsMapName + " for " + ci.getEventName() + " in EventSourcingPipeline sink");
                                 }
                                 ci.markComplete();
                                 return ci.toGenericRecord();

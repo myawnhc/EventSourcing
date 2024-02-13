@@ -20,7 +20,6 @@ import com.hazelcast.core.Offloadable;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import org.hazelcast.eventsourcing.event.DomainObject;
-import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 
 import java.io.Serializable;
@@ -31,13 +30,11 @@ public class UpdateViewEntryProcessor<D extends DomainObject<K>, K extends Compa
         implements EntryProcessor<K, GenericRecord, GenericRecord>, Offloadable, Serializable {
 
     private SourcedEvent<D, K> event;
-    private HydrationFactory<D, K, E> hydrationFactory;
     private static final Logger logger = Logger.getLogger(UpdateViewEntryProcessor.class.getName());
 
 
-    public UpdateViewEntryProcessor(SourcedEvent<D, K> event, HydrationFactory<D, K, E> hf) {
+    public UpdateViewEntryProcessor(SourcedEvent<D, K> event) {
         this.event = event;
-        this.hydrationFactory = hf;
     }
 
     @Override
@@ -48,10 +45,6 @@ public class UpdateViewEntryProcessor<D extends DomainObject<K>, K extends Compa
     @Override
     public synchronized GenericRecord process(Map.Entry<K, GenericRecord> viewEntry) {
         GenericRecord domainObject = viewEntry.getValue();
-        // debugging - OK for 'Open' event, but not for BalanceChange events or Merker
-        if (domainObject == null) {
-            logger.warning("Null DO value for materialized view update: " + viewEntry + " event " + event );
-        }
         GenericRecord updatedDO = event.apply(domainObject);
         viewEntry.setValue(updatedDO);
         return updatedDO;

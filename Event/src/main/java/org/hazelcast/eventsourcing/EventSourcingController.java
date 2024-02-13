@@ -31,7 +31,7 @@ import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.event.SourcedEvent;
 import org.hazelcast.eventsourcing.eventstore.EventStore;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
-import org.hazelcast.eventsourcing.sync.CompletionTracker;
+import org.hazelcast.eventsourcing.sync.CompletionListener;
 import org.hazelcast.eventsourcing.viridiancfg.EnableMapJournal;
 
 import java.io.IOException;
@@ -60,9 +60,6 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     /** Return the name of the domain object passed in to the Builder */
     public String getDomainObjectName() { return domainObjectName; } // used to name pipeline job
     private static Logger logger = null; // assigned in static initializer
-
-    private CompletionTracker completionTracker = new CompletionTracker();
-    public CompletionTracker getCompletionTracker() { return completionTracker; }
 
     // Sequence Generator
     private String sequenceGeneratorName;
@@ -191,7 +188,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
 
         public EventSourcingControllerBuilder<D,K,E> hydrationFactory(HydrationFactory<D,K,E> hf) {
             controller.hydrationFactory = hf;
-            CompletionInfo.setHydrationFactory(hf);
+            //CompletionInfo.setHydrationFactory(hf);
             return this;
         }
 
@@ -250,7 +247,11 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
         }
         private void buildCompletionsMap() {
             controller.completionsMap = controller.hazelcast.getMap(controller.completionMapName);
-            controller.completionsMap.addEntryListener(controller.getCompletionTracker(), true);
+            // NEW: handleEvent arms a PSK-specific listener, completion tracker
+            // incorrect behavior but may be inefficient (multiple listeners updating same completionn info)
+//            controller.completionTracker = new CompletionTracker(controller.hazelcast);
+//            controller.completionsMap.addEntryListener(controller.completionTracker, true);
+//            logger.info("ESC builder has armed CompletionTracker as entry listener on completions map");
             // We don't use this SQL mapping internally but define it to make it friendlier to developers
 //            controller.completions_mapping_template = controller.completions_mapping_template.replaceAll("\\?", controller.completionMapName);
 //            System.out.println("PSK: " + PartitionedSequenceKey.class); // Shows here fine, but SQL mapping says class not found
@@ -290,7 +291,7 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
             logger.info("Building maps");
             buildViewMap();
             buildPendingMap();
-            buildCompletionsMap();
+            buildCompletionsMap(); // includes completion tracker
             logger.info("Starting pipeline");
             startPipelineJob();
             return controller;
@@ -338,11 +339,13 @@ public class EventSourcingController<D extends DomainObject<K>, K extends Compar
     public CompletableFuture<CompletionInfo> handleEvent(SourcedEvent<D,K> event, UUID identifier) {
         try {
             long sequence = getNextSequence();
-            PartitionedSequenceKey<K> psk = new PartitionedSequenceKey<>(sequence, event.getKey());
-            CompletableFuture<CompletionInfo> future = completionTracker.register(psk);
-            CompletionInfo info = new CompletionInfo(event, identifier);
-            completionsMap.put(psk, info.toGenericRecord());
-            pendingEventsMap.put(psk, event.toGenericRecord()); // Triggers the EventSourcingPipeline
+            final PartitionedSequenceKey psk = new PartitionedSequenceKey(sequence, event.getKey());
+            final CompletableFuture<CompletionInfo> future = new CompletableFuture<>();
+            CompletionListener listener = new CompletionListener((IMap)completionsMap, psk, future);
+            GenericRecord eventAsGR = event.toGenericRecord();
+            CompletionInfo info = new CompletionInfo(eventAsGR, identifier);
+            completionsMap.set(psk, info.toGenericRecord());
+            pendingEventsMap.set(psk, eventAsGR); // Triggers the EventSourcingPipeline
             return future;
         } catch (Throwable t) {
             t.printStackTrace();

@@ -55,6 +55,7 @@ public abstract class SourcedEvent<D extends DomainObject<K>, K> implements Unar
 
     public static String EVENT_NAME = "eventName"; // used when adding event name to GenericRecord
     public static String EVENT_TIME = "eventTime"; // timestamp of event time in SQL
+    public static String EVENT_KEY = "key";
 
     protected String eventName; // Subclasses must set!
     public String getEventName() { return eventName; }

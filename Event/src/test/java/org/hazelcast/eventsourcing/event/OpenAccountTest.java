@@ -81,8 +81,10 @@ public class OpenAccountTest {
         // OpenAccountEvent is a SourcedEvent
         OpenAccountEvent open = new OpenAccountEvent("12345", "Bob", BigDecimal.valueOf(777.22));
         CompletableFuture<CompletionInfo> completion = controller.handleEvent(open, UUID.randomUUID());
+        System.out.println("CF<CI> " + completion);
         CompletionInfo info = completion.get();
-        Assertions.assertTrue(info.getEvent() instanceof OpenAccountEvent);
+        System.out.println(" CINFO " + info);
+        Assertions.assertTrue(info.getEventName().equals(OpenAccountEvent.QUAL_EVENT_NAME));
         Assertions.assertEquals(CompletionInfo.Status.COMPLETED_OK, info.status);
 
         // Get a materialized view that reflects the event
