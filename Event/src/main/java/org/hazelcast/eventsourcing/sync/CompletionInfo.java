@@ -36,7 +36,7 @@ public class CompletionInfo implements Serializable {
     private UUID uuid;
     private GenericRecord eventAsGR;
     private String eventName;
-    private String eventKey;
+    private Object eventKey;
 
     public CompletionInfo(GenericRecord event, UUID identifier) {
         status = Status.INCOMPLETE;
@@ -44,8 +44,16 @@ public class CompletionInfo implements Serializable {
         this.uuid = identifier;
         this.eventAsGR = event;
         this.eventName = event.getString(SourcedEvent.EVENT_NAME);
-        this.eventKey = event.getString(SourcedEvent.EVENT_KEY);
-    }
+        switch(eventAsGR.getFieldKind("key")) {
+            case STRING:
+                this.eventKey = eventAsGR.getString("key");
+                break;
+            case COMPACT:
+                this.eventKey = eventAsGR.getGenericRecord("key");
+                break;
+            default:
+                System.out.println("Unexpected field type " + eventAsGR.getFieldKind("key").name());
+        }    }
 
     public CompletionInfo(GenericRecord data) {
         this.status = Status.valueOf(data.getString("status"));
@@ -54,7 +62,16 @@ public class CompletionInfo implements Serializable {
         this.completionTime = data.getInt64("completionTime");
         this.eventAsGR = data.getGenericRecord("event");
         this.eventName = eventAsGR.getString("eventName");
-        this.eventKey = eventAsGR.getString("key");
+        switch(eventAsGR.getFieldKind("key")) {
+            case STRING:
+                this.eventKey = eventAsGR.getString("key");
+                break;
+            case COMPACT:
+                this.eventKey = eventAsGR.getGenericRecord("key");
+                break;
+            default:
+                System.out.println("Unexpected field type " + eventAsGR.getFieldKind("key").name());
+        }
     }
 
     public void markComplete() {
@@ -90,7 +107,7 @@ public class CompletionInfo implements Serializable {
     }
     public String getEventName() { return eventName; }
 
-    public String getEventKey() { return eventKey; }
+    public Object getEventKey() { return eventKey; }
 
     @Override
     public String toString() {

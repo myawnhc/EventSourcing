@@ -78,9 +78,9 @@ public class EventStoreTests {
 
         String key1, key2, key3;
         try {
-            key1 = future1.get().getEventKey();
-            key2 = future2.get().getEventKey();
-            key3 = future3.get().getEventKey();
+            key1 = (String) future1.get().getEventKey();
+            key2 = (String) future2.get().getEventKey();
+            key3 = (String) future3.get().getEventKey();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         } catch (ExecutionException e) {

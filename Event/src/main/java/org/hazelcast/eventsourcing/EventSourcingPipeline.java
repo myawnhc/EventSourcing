@@ -29,6 +29,7 @@ import com.hazelcast.map.IMap;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.eventsourcing.event.DomainObject;
+import org.hazelcast.eventsourcing.event.GenericRecordSupport;
 import org.hazelcast.eventsourcing.event.HydrationFactory;
 import org.hazelcast.eventsourcing.event.MarkerEvent;
 import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
@@ -107,7 +108,7 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 ServiceFactories.sharedService((ctx) -> eventStore);
 
         // IMap/Materialized View as a service --
-        ServiceFactory<?, IMap<K, GenericRecord>> materializedViewServiceFactory =
+        ServiceFactory<?, IMap<Object, GenericRecord>> materializedViewServiceFactory =
                 ServiceFactories.iMapService(controller.getViewMapName());
 
         // Pending map as a service (so we can delete pending events when processed)
@@ -137,8 +138,8 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     GenericRecord eventgr = (GenericRecord) pendingEvent.getValue();
                     String eventName = eventgr.getString("eventName");
                     SourcedEvent<D,K> event = hydrationFactory.hydrateEvent(eventName, eventgr);
-                    if (logSpecificEvents && eventsToLog.contains(eventName)) {
-                        logger.info("ESP reads GenericRecord and hydrates event " + event);
+                    if (event == null) {
+                        logger.severe("EventSourcingPipeline: hydration of " + eventName + " returned null! (Source=" + eventgr + ")");
                     }
                     if (event instanceof MarkerEvent) {
                         ((MarkerEvent) event).pipelineEntry();
@@ -157,11 +158,17 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                 // Update materialized view (using EntryProcessor)
                 .mapUsingService(materializedViewServiceFactory, (viewMap, tuple2) -> {
                     SourcedEvent<D,K> event = tuple2.f1();
-                    K key = event.getKey();
-                    //String eventName = event.getEventName();
                     if (verboseLogging)
                         logger.info("EventSourcingPipeline updating materialized view for event " + event);
-                    viewMap.executeOnKey(key, new UpdateViewEntryProcessor<D, K, E>(event));
+                    K key = event.getKey();
+                    if (key instanceof GenericRecordSupport) {
+                        // Used when Key is a java object other than a simple String;
+                        // key type must implement GenericRecordSupport interface
+                        GenericRecord keyGR = ((GenericRecordSupport) key).toGenericRecord();
+                        viewMap.executeOnKey(keyGR, new UpdateViewEntryProcessor(event));
+                    } else {
+                        viewMap.executeOnKey(key, new UpdateViewEntryProcessor(event));
+                    }
                     return tuple2;
                 }).setName("Update Materialized View")
                 // Broadcast the event to all subscribers
@@ -181,9 +188,9 @@ public class EventSourcingPipeline<D extends DomainObject<K>, K extends Comparab
                     if (event instanceof MarkerEvent) {
                         ((MarkerEvent) event).pipelineExit();
                     }
-                    //return tuple2;
+                    // CompletionInfo now expects GenericRecord rather than SourcedEvent
                     GenericRecord eventAsGR = tuple2.f1().toGenericRecord();
-                    return tuple2(key, eventAsGR); // completion info expects generic now, not sourced event
+                    return tuple2(key, eventAsGR);
                 }).setName("Remove event from pending events")
                 .writeTo(Sinks.mapWithUpdating(completionsMap,
                         tuple -> tuple.f0(),

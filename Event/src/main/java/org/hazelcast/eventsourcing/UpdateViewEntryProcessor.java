@@ -26,13 +26,25 @@ import java.io.Serializable;
 import java.util.Map;
 import java.util.logging.Logger;
 
+/* In order to work with complex keys (e.g., InventoryKey in the demo), ignoring the
+   parameterized key type and just having EntryProcessor work on Object key,
+   so that we can use a GenericRecord representation for non-String keys.
+ */
+
+/** This Entry Processor handles updating the materialized view and is called from the
+ * EventSourcing pipeline. It will apply the event being processed to the domain object
+ * using the event's apply() method.
+ *
+ * @param <D> the domain object type
+ * @param <K> the domain object key type
+ * @param <E> the event type
+ */
 public class UpdateViewEntryProcessor<D extends DomainObject<K>, K extends Comparable<K>, E extends SourcedEvent<D, K>>
-        implements EntryProcessor<K, GenericRecord, GenericRecord>, Offloadable, Serializable {
+        implements EntryProcessor<Object, GenericRecord, GenericRecord>, Offloadable, Serializable {
 
     private SourcedEvent<D, K> event;
     private static final Logger logger = Logger.getLogger(UpdateViewEntryProcessor.class.getName());
-
-
+    
     public UpdateViewEntryProcessor(SourcedEvent<D, K> event) {
         this.event = event;
     }
@@ -43,8 +55,9 @@ public class UpdateViewEntryProcessor<D extends DomainObject<K>, K extends Compa
     }
 
     @Override
-    public synchronized GenericRecord process(Map.Entry<K, GenericRecord> viewEntry) {
+    public synchronized GenericRecord process(Map.Entry<Object, GenericRecord> viewEntry) {
         GenericRecord domainObject = viewEntry.getValue();
+        // Null DO is OK/expected for 'create' events, so no longer logging it
         GenericRecord updatedDO = event.apply(domainObject);
         viewEntry.setValue(updatedDO);
         return updatedDO;
